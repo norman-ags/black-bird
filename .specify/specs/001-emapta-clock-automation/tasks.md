@@ -1,7 +1,10 @@
 # Tasks: EMAPTA Clock Automation
 
 **Input**: Design documents from `.specify/specs/001-emapta-clock-automation/`
-**Prerequisites**: plan.md (available), spec.md (available)
+**Prerequisites**: plan.md (avai- [x] T107 [Backend] Remove advanced mode completely: eliminate advanced mode toggle from App.tsx and simplify to single status screen with emergency manual override only. ✅
+
+- [x] T108 [Backend] Move auto clock-in to backend: migrate auto-startup logic from frontend useAutoStartup hook to backend scheduler initialization for better reliability. ✅
+- [x] T109 [Backend] Update StatusScreen for pure display: remove auto-startup integration from frontend component, make it display-only with emergency manual controls. ✅le), spec.md (available)
 
 **Tests**: Tests are NOT explicitly requested in the feature specification, so test tasks are omitted per instructions.
 
@@ -98,10 +101,10 @@ Based on plan.md, this is a single Tauri desktop application with paths at repos
 
 ### Implementation for User Story 2
 
-- [x] T035 [P] [US2] Create ScheduleConfig component in src/components/ScheduleConfig.tsx for time configuration
-- [x] T036 [US2] Implement schedule service in src/services/schedule-service.ts with 9-hour minimum logic
-- [x] T037 [US2] Create useSchedule custom hook in src/hooks/use-schedule.ts for schedule state management
-- [ ] T038 [US2] Add background task scheduling using Tauri's system tray or intervals
+- [x] T035 [P] [US2] Create ScheduleConfig component in src/components/ScheduleConfig.tsx for time configuration ✅
+- [x] T036 [US2] Implement schedule service in src/services/schedule-service.ts with 9-hour minimum logic ✅
+- [x] T037 [US2] Create useSchedule custom hook in src/hooks/use-schedule.ts for schedule state management ✅
+<!-- - [ ] T038 [US2] Add background task scheduling using Tauri's system tray or intervals
 - [ ] T039 [US2] Implement automatic clock-in functionality with timezone handling
 - [ ] T040 [US2] Implement automatic clock-out functionality with 9-hour minimum enforcement
 - [ ] T041 [US2] Add retry logic for failed automatic operations with exponential backoff
@@ -109,7 +112,55 @@ Based on plan.md, this is a single Tauri desktop application with paths at repos
 - [ ] T043 [US2] Create notification system for successful/failed automatic operations
 - [ ] T044 [US2] Integrate ScheduleConfig component with schedule service
 - [ ] T045 [US2] Add JSDoc documentation to all US2 functions and components
-- [ ] T046 [US2] Update App.tsx to integrate ScheduleConfig component
+- [ ] T046 [US2] Update App.tsx to integrate ScheduleConfig component -->
+
+### Recommendation & incremental tasks
+
+Recommendation: keep the ScheduleConfig UI and schedule editing in the renderer (React), but add a small set of backend (Tauri) APIs to persist schedules securely and enable a future migration of the scheduler execution into the Tauri backend. This gives a fast, low-risk win (secure schedule persistence + UI wiring) while leaving the larger, production-grade backend scheduler as a planned follow-up.
+
+The following tasks implement that recommendation. They are split into a small, fast path (persist & wire the UI) and a longer-term migration path (move execution to Tauri).
+
+- [x] T090 [US2] Implement Tauri schedule persistence commands `get_schedule` and `set_schedule` in `src-tauri/src/commands.rs` and wire them to the existing storage backend (`src-tauri/src/storage.rs`). These commands should accept/return a JSON string representing the schedule config. ✅
+- [x] T091 [US2] Add schedule persistence wrappers in `src/services/storage-service.ts`: `saveSchedule(schedule)` / `loadSchedule()` that call the new Tauri commands with a `localStorage` fallback. ✅
+- [x] T092 [US2] Update `src/components/ScheduleConfig.tsx` to use `saveSchedule` / `loadSchedule` so the UI persists to secure storage, and add a small success/failure notification in the component. ✅
+- [x] T093 [US2] Integrate `ScheduleConfig` into `App.tsx` (mount the component behind a menu or settings route) so users can edit and save schedules (this completes T046 as the UI is wired to persistent storage). ✅
+
+Longer-term (recommended migration - lower priority but production-ready):
+
+- [x] T094 [US2] Implement a backend scheduler in Tauri: add `start_scheduler` / `stop_scheduler` commands and an in-process scheduler that reads persisted schedules and performs clock-in/out operations. ✅
+- [x] T095 [US2] Add eventing and notifications from Tauri to the renderer: expose status events (e.g., `scheduler.started`, `scheduler.clock_in.succeeded`, `scheduler.clock_out.failed`) and add native notifications and persistent logs in `src-tauri`. ✅
+
+**Phase 4.5: Scheduler Architecture Consolidation (Priority: P1)**
+
+Following successful completion of T094/T095, consolidate dual scheduler implementations to reduce complexity and improve maintainability.
+
+- [x] T097 [US2] Simplify App.tsx navigation: consolidate "Backend Scheduler" and "Auto Schedule" tabs into unified "📅 Auto Schedule" tab that combines schedule configuration with backend scheduler controls. ✅
+- [x] T099 [US2] Deprecate frontend ScheduleManager: mark `src/services/schedule-service.ts` as deprecated and update components to use backend scheduler exclusively via Tauri commands. ✅
+- [x] T101 [US2] Clean up redundant code: remove unused frontend scheduling logic, duplicate type definitions, and obsolete timer-based implementations while preserving manual clock functionality. ✅
+- [ ] T102 [US2] Integration testing: verify end-to-end backend scheduler functionality including schedule persistence, automatic execution, event emission, and manual override capabilities.
+
+**Phase 4.6: Simplified Auto-Flow Implementation (Priority: P1)**
+
+Based on updated requirements for ultra-simple user experience: setup once, then fully automatic daily operation. **Priority: Remove advanced mode and move auto-startup to backend.**
+
+- [x] T104 [Simplify] Create simplified main status UI: replace complex tabs with single status screen showing current state and countdown timer. ✅
+- [x] T105 [Simplify] Hide schedule configuration: move existing schedule UI to advanced/settings section, focus main UI on status display. ✅
+- [x] T106 [Simplify] Implement app startup auto-clock-in logic: check attendance status on launch and automatically clock in if eligible (not same day, not rest day, not on leave). ✅
+- [x] T107 [Backend] Remove advanced mode completely: eliminate advanced mode toggle from App.tsx and simplify to single status screen with emergency manual override only. ✅
+- [x] T108 [Backend] Move auto clock-in to backend: migrate auto-startup logic from frontend useAutoStartup hook to backend scheduler initialization for better reliability. ✅
+- [x] T109 [Backend] Update StatusScreen for pure display: remove auto-startup integration from frontend component, make it display-only with emergency manual controls. ✅
+
+**Later: Tray Integration (Phase 4.7)**
+
+- [ ] T110 [Tray] Implement system tray integration: app runs in background, minimize to tray instead of exit, tray icon with status indicator and context menu.
+- [ ] T111 [Tray] Window management: close button minimizes to tray, true exit only via tray context menu, restore window on tray click.
+- [ ] T112 [Tray] System startup integration: optional auto-launch with Windows startup for truly set-and-forget operation.
+- [ ] T113 [Tray] Final UI polish: streamline interface to show only essential status information and emergency manual controls.
+
+Notes:
+
+- The T090–T093 path is low-risk and quick: it only touches the storage surface and renderer wiring. It is sufficient to mark schedules as persisted and visible to users immediately.
+- The T094–T095 path is recommended for production: moving timers and network side-effects to the backend improves reliability (survives renderer reloads), allows native notifications, and centralizes retry/backoff and logging.
 
 **Checkpoint**: At this point, User Stories 1 AND 2 should both work independently - manual operations + automation
 

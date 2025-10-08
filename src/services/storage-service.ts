@@ -233,3 +233,63 @@ export async function loadRefreshTokenMetadata(): Promise<RefreshTokenStore | nu
     return null;
   }
 }
+
+/**
+ * Save schedule configuration securely
+ *
+ * Stores the schedule configuration object as JSON using Tauri secure storage
+ * or localStorage fallback. The schedule data is not encrypted since it's not
+ * sensitive like authentication tokens.
+ *
+ * @param schedule Schedule configuration object
+ */
+export async function saveSchedule(schedule: any): Promise<void> {
+  try {
+    const scheduleJson = JSON.stringify(schedule);
+
+    if (isTauriEnvironment()) {
+      // Use Tauri secure storage
+      await invoke("set_schedule", { scheduleJson });
+      console.log("Schedule saved securely via Tauri");
+    } else {
+      // Fallback to localStorage for development
+      localStorage.setItem("bb_schedule", scheduleJson);
+      console.log("Schedule saved via localStorage (development mode)");
+    }
+  } catch (error) {
+    console.error("Failed to save schedule:", error);
+    throw new Error(
+      `Failed to save schedule: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`
+    );
+  }
+}
+
+/**
+ * Load schedule configuration
+ *
+ * Retrieves the schedule configuration from Tauri secure storage or
+ * localStorage fallback and parses it as JSON. Returns null if no schedule
+ * exists or parsing fails.
+ *
+ * @returns Schedule configuration object or null if not found/invalid
+ */
+export async function loadSchedule(): Promise<any | null> {
+  try {
+    let scheduleJson: string | null = null;
+
+    if (isTauriEnvironment()) {
+      // Use Tauri secure storage
+      scheduleJson = await invoke("get_schedule");
+    } else {
+      // Fallback to localStorage for development
+      scheduleJson = localStorage.getItem("bb_schedule");
+    }
+
+    return scheduleJson ? JSON.parse(scheduleJson) : null;
+  } catch (error) {
+    console.warn("Failed to load schedule:", error);
+    return null;
+  }
+}

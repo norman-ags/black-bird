@@ -1,5 +1,5 @@
 /**
- * Black Bird - Clock Automation Application
+ * Black Bird - Clock Automation
  * 
  * Main Tauri application entry point with comprehensive error handling,
  * secure storage commands, and proper application setup.
@@ -9,6 +9,7 @@
 mod commands;
 mod storage;
 mod errors;
+mod scheduler;
 
 use crate::commands::*;
 use crate::errors::setup_error_handler;
@@ -25,13 +26,17 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     
     // Initialize storage backend (will be available for commands)
     let app_handle = app.handle().clone();
-    match crate::storage::create_storage_backend(app_handle) {
+    match crate::storage::create_storage_backend(app_handle.clone()) {
         Ok(_) => println!("Storage backend initialized successfully"),
         Err(e) => {
             println!("ERROR: Failed to initialize storage: {}", e);
             return Err(format!("Failed to initialize storage: {}", e).into());
         }
     }
+    
+    // Initialize scheduler
+    crate::scheduler::initialize_scheduler(app_handle.clone());
+    println!("Scheduler initialized successfully");
     
     Ok(())
 }
@@ -51,6 +56,21 @@ pub fn run() {
             delete_encrypted_data,
             list_storage_keys,
             
+            // Schedule commands
+            set_schedule,
+            get_schedule,
+            
+            // Scheduler commands
+            start_scheduler,
+            stop_scheduler,
+            get_scheduler_state,
+            set_scheduler_access_token,
+            scheduler_manual_clock_in,
+            scheduler_manual_clock_out,
+            scheduler_can_clock_out,
+            scheduler_check_auto_startup,
+            initialize_background_monitoring,
+            
             // Legacy greeting command (can be removed in production)
             greet
         ])
@@ -63,5 +83,5 @@ pub fn run() {
  */
 #[tauri::command]
 fn greet(name: &str) -> String {
-    format!("Hello, {}! Welcome to Black Bird Clock Automation!", name)
+    format!("Hello, {}! You've been greeted from Rust!", name)
 }

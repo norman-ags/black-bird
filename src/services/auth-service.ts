@@ -24,13 +24,13 @@ export async function validateAndStoreRefreshToken(
   validateRequiredString(userRefreshToken, "Refresh token");
 
   try {
-    // const tokenResp = await exchangeRefreshToken(userRefreshToken);
-    const tokenResp: TokenResponse = {
-      access_token: "access_test",
-      refresh_token: "refresh_test",
-      expires_in: 3600,
-      token_type: "Bearer",
-    };
+    const tokenResp = await exchangeRefreshToken(userRefreshToken);
+    // const tokenResp: TokenResponse = {
+    //   access_token: "access_test",
+    //   refresh_token: "refresh_test",
+    //   expires_in: 3600,
+    //   token_type: "Bearer",
+    // };
 
     // Store the new refresh token (encrypted)
     await saveRefreshToken(tokenResp.refresh_token);
