@@ -16,18 +16,38 @@ const queryClient = new QueryClient({
 });
 
 const AppContent = () => {
-  const { accessToken } = useAuth();
+  const { refreshToken, loading } = useAuth();
   const [showEmergencyOverride, setShowEmergencyOverride] = useState(false);
+  const [activeScreen, setActiveScreen] = useState<"status" | "setup" | null>(
+    "status"
+  );
 
-  // If not authenticated, show setup
-  if (!accessToken) {
+  // Show loading while checking for stored tokens
+  if (loading) {
     return (
       <main className="container">
         <h1>Black Bird — Clock Automation</h1>
-        <TokenSetup />
+        <div style={{ textAlign: "center", padding: "48px 24px" }}>
+          <p>Loading...</p>
+        </div>
       </main>
     );
   }
+
+  console.log({ refreshToken });
+
+  // If no refresh token stored, show setup (first time user)
+  if (!refreshToken || activeScreen === "setup") {
+    return (
+      <main className="container">
+        <h1>Black Bird — Clock Automation</h1>
+        <TokenSetup onSave={() => setActiveScreen("status")} />
+      </main>
+    );
+  }
+
+  // If refresh token exists but no access token, we'll get one automatically
+  // Show status screen regardless - the backend will handle token refresh
 
   // Ultra-simplified interface
   return (
@@ -36,6 +56,22 @@ const AppContent = () => {
 
       <StatusScreen />
 
+      <button
+        type="button"
+        onClick={() => setActiveScreen("setup")}
+        style={{
+          padding: "8px 16px",
+          fontSize: "13px",
+          backgroundColor: "#f59e0b",
+          color: "white",
+          border: "none",
+          borderRadius: "4px",
+          cursor: "pointer",
+          marginBottom: "16px",
+        }}
+      >
+        Go to setup
+      </button>
       {/* Emergency manual override section */}
       <div
         style={{

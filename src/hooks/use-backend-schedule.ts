@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { WorkSchedule } from "../types/schedule";
 import {
   getBackendSchedulerService,
@@ -6,6 +7,15 @@ import {
   type SchedulerState,
 } from "../services/backend-scheduler-service";
 import { useAuth } from "./use-auth";
+
+// Define AttendanceItem type based on the API response
+interface AttendanceItem {
+  work_date: string;
+  attendance_status: string;
+  date_time_in: string | null;
+  date_time_out: string | null;
+  is_restday: boolean | null;
+}
 
 /**
  * Custom hook for backend scheduler integration
@@ -26,6 +36,7 @@ interface UseBackendScheduleReturn {
   // Manual operations
   manualClockIn: () => Promise<boolean>;
   manualClockOut: (bypassMinimum?: boolean) => Promise<boolean>;
+  syncWithRealAttendance: () => Promise<void>;
 
   // Schedule control
   startScheduler: (schedule: WorkSchedule) => Promise<void>;
@@ -267,6 +278,84 @@ export const useBackendSchedule = (): UseBackendScheduleReturn => {
     [refreshSchedulerState, refreshCanClockOut]
   );
 
+  /**
+   * Sync local scheduler state with real EMAPTA attendance status
+   */
+  const syncWithRealAttendance = useCallback(async (): Promise<void> => {
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      // Get real attendance status from EMAPTA API
+      const attendanceStatus = await invoke<AttendanceItem | null>(
+        "api_get_attendance_status"
+      );
+
+      if (attendanceStatus) {
+        // Update scheduler state based on real attendance
+        const isReallyClocked =
+          attendanceStatus.attendance_status === "Started" &&
+          attendanceStatus.date_time_in != null &&
+          attendanceStatus.date_time_out == null;
+
+        console.log(
+          `Real attendance status: ${attendanceStatus.attendance_status}, Currently clocked in: ${isReallyClocked}`
+        );
+
+        // Update scheduler state to match reality
+        if (schedulerState) {
+          const updatedState = {
+            ...schedulerState,
+            currentSession: {
+              ...schedulerState.currentSession,
+              clockedIn: isReallyClocked,
+              clockInTime: isReallyClocked
+                ? attendanceStatus.date_time_in || undefined
+                : undefined,
+              expectedClockOutTime:
+                isReallyClocked && attendanceStatus.date_time_in
+                  ? new Date(
+                      new Date(attendanceStatus.date_time_in).getTime() +
+                        9 * 60 * 60 * 1000
+                    ).toISOString()
+                  : undefined,
+            },
+          };
+          setSchedulerState(updatedState);
+        }
+      }
+
+      // Also refresh the scheduler state
+      await refreshSchedulerState();
+    } catch (err) {
+      console.error("Failed to sync with real attendance:", err);
+      const errorMsg = err instanceof Error ? err.message : "Sync failed";
+      setError(errorMsg);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [schedulerState, refreshSchedulerState]);
+
+  /**
+   * Sync with real attendance status when accessToken changes
+   */
+  useEffect(() => {
+    if (!accessToken) return;
+
+    const syncAttendance = async () => {
+      try {
+        // Small delay to ensure everything is initialized
+        setTimeout(async () => {
+          await syncWithRealAttendance();
+        }, 1500);
+      } catch (err) {
+        console.error("Failed to sync attendance on load:", err);
+      }
+    };
+
+    syncAttendance();
+  }, [accessToken, syncWithRealAttendance]);
+
   // Derived state
   const isSchedulerRunning = schedulerState?.isRunning ?? false;
 
@@ -282,6 +371,7 @@ export const useBackendSchedule = (): UseBackendScheduleReturn => {
     // Manual operations
     manualClockIn,
     manualClockOut,
+    syncWithRealAttendance,
 
     // Schedule control
     startScheduler,

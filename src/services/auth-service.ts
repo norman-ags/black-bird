@@ -1,19 +1,15 @@
-import { exchangeRefreshToken } from "./api-client";
-import {
-  saveRefreshToken,
-  saveRefreshTokenMetadata,
-  loadRefreshToken,
-} from "./storage-service";
+import { invoke } from "@tauri-apps/api/core";
+import { saveRefreshTokenMetadata, loadRefreshToken } from "./storage-service";
 import { validateRequiredString } from "../utils/validation";
 import type { TokenResponse } from "../types/auth";
 
 /**
  * Authentication service for EMAPTA token management
- * Handles token exchange, validation, and secure storage
+ * All API calls are now handled by the backend for security
  */
 
 /**
- * Exchange user-provided refresh token and store received tokens
+ * Exchange user-provided refresh token and store received tokens (via backend)
  * @param userRefreshToken refresh token provided by user
  * @returns Token response with access_token and new refresh_token
  * @throws Error if token exchange fails or validation fails
@@ -24,32 +20,36 @@ export async function validateAndStoreRefreshToken(
   validateRequiredString(userRefreshToken, "Refresh token");
 
   try {
-    const tokenResp = await exchangeRefreshToken(userRefreshToken);
-    // const tokenResp: TokenResponse = {
-    //   access_token: "access_test",
-    //   refresh_token: "refresh_test",
-    //   expires_in: 3600,
-    //   token_type: "Bearer",
-    // };
+    // Call backend API command instead of direct API call
+    const tokenResponse = await invoke<TokenResponse>(
+      "api_exchange_refresh_token",
+      {
+        refreshToken: userRefreshToken,
+      }
+    );
 
-    // Store the new refresh token (encrypted)
-    await saveRefreshToken(tokenResp.refresh_token);
-
-    // Store metadata for tracking
+    // The backend already stores the tokens securely, but we keep this for compatibility
     await saveRefreshTokenMetadata({
       encrypted: "true",
-      expiresAt: tokenResp.expires_in
-        ? new Date(Date.now() + tokenResp.expires_in * 1000).toISOString()
+      expiresAt: tokenResponse.expires_in
+        ? new Date(Date.now() + tokenResponse.expires_in * 1000).toISOString()
         : null,
     });
 
-    return tokenResp;
+    return tokenResponse;
   } catch (error) {
-    throw new Error(
-      `Token validation failed: ${
-        error instanceof Error ? error.message : "Unknown error"
-      }`
-    );
+    console.error("Token validation error details:", error);
+
+    let errorMessage = "Unknown error";
+    if (error instanceof Error) {
+      errorMessage = error.message;
+    } else if (typeof error === "string") {
+      errorMessage = error;
+    } else if (error && typeof error === "object") {
+      errorMessage = JSON.stringify(error);
+    }
+
+    throw new Error(`Token validation failed: ${errorMessage}`);
   }
 }
 

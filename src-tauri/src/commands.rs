@@ -3,6 +3,61 @@ use crate::storage::create_storage_backend;
 use crate::scheduler::{get_scheduler, WorkSchedule as SchedulerWorkSchedule, SchedulerState};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
+use reqwest;
+use chrono;
+
+// EMAPTA API constants
+const EMAPTA_TOKEN_ENDPOINT: &str = "https://api.platform.emapta.com/auth/v1/auth/protocol/openid-connect/token";
+const EMAPTA_LOGIN_ENDPOINT: &str = "https://api.platform.emapta.com/time-and-attendance/ta/v1/dtr/attendance/login";
+const EMAPTA_LOGOUT_ENDPOINT: &str = "https://api.platform.emapta.com/time-and-attendance/ta/v1/dtr/attendance/logout";
+const EMAPTA_ATTENDANCE_ENDPOINT: &str = "https://api.platform.emapta.com/time-and-attendance/ta/v1/dtr/attendance";
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TokenResponse {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_in: Option<i64>,
+    pub token_type: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EmaptaApiResponse {
+    pub timestamp: String,
+    #[serde(rename = "statusCode")]
+    pub status_code: u16,
+    pub message: String,
+    pub result: TokenResponse,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AttendanceItem {
+    pub work_date: String,
+    pub attendance_status: String,
+    pub date_time_in: Option<String>,
+    pub date_time_out: Option<String>,
+    pub is_restday: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AttendanceData {
+    pub items: Vec<AttendanceItem>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AttendanceApiResponse {
+    pub timestamp: String,
+    pub status_code: u16,
+    pub message: Vec<String>,
+    pub data: AttendanceData,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TokenRequest {
+    pub grant_type: String,
+    pub client_id: String,
+    pub refresh_token: String,
+    pub scope: String,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StorageResult {
@@ -24,6 +79,129 @@ fn validate_storage_key(key: &str) -> Result<(), StorageError> {
         return Err(AppError::validation("key", "Storage key contains invalid characters"));
     }
     Ok(())
+}
+
+// ============================================================================
+// BACKEND API CLIENT FUNCTIONS
+// ============================================================================
+
+/// Exchange refresh token for access token using EMAPTA API
+pub async fn exchange_refresh_token_api(refresh_token: &str) -> Result<TokenResponse, String> {
+    let client = reqwest::Client::new();
+    
+    let request_body = TokenRequest {
+        grant_type: "refresh_token".to_string(),
+        client_id: "EMAPTA-MYEMAPTAWEB".to_string(),
+        refresh_token: refresh_token.to_string(),
+        scope: "openid".to_string(),
+    };
+
+    let response = client
+        .post(EMAPTA_TOKEN_ENDPOINT)
+        .header("content-type", "application/json")
+        .json(&request_body)
+        .send()
+        .await
+        .map_err(|e| format!("Token exchange request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+        return Err(format!("Token exchange failed: {} - {}", status, error_text));
+    }
+
+    // Debug: log the response text before trying to parse it
+    let response_text = response.text().await
+        .map_err(|e| format!("Failed to get response text: {}", e))?;
+    
+    println!("EMAPTA API Response: {}", response_text);
+    
+    let api_response: EmaptaApiResponse = serde_json::from_str(&response_text)
+        .map_err(|e| format!("Failed to parse API response: {} - Response was: {}", e, response_text))?;
+
+    Ok(api_response.result)
+}
+
+/// Perform clock in operation using EMAPTA API
+pub async fn clock_in_api(access_token: &str) -> Result<bool, String> {
+    println!("[API] Clock-in API called with token: {}", access_token);
+    let client = reqwest::Client::new();
+    
+    let response = client
+        .post(EMAPTA_LOGIN_ENDPOINT)
+        .header("content-type", "application/json")
+        .header("Authorization", format!("Bearer {}", access_token))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .map_err(|e| format!("Clock in request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+        println!("[API] Clock-in failed with token: {}, status: {}, error: {}", access_token, status, error_text);
+        return Err(format!("Clock in failed: {} - {}", status, error_text));
+    }
+
+    Ok(true)
+}
+
+/// Perform clock out operation using EMAPTA API
+pub async fn clock_out_api(access_token: &str) -> Result<bool, String> {
+    println!("[API] Clock-out API called with token: {}", access_token);
+    let client = reqwest::Client::new();
+    
+    let response = client
+        .post(EMAPTA_LOGOUT_ENDPOINT)
+        .header("content-type", "application/json")
+        .header("Authorization", format!("Bearer {}", access_token))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .map_err(|e| format!("Clock out request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+        println!("[API] Clock-out failed with token: {}, status: {}, error: {}", access_token, status, error_text);
+        return Err(format!("Clock out failed: {} - {}", status, error_text));
+    }
+
+    Ok(true)
+}
+
+/// Fetch current attendance status from EMAPTA API
+pub async fn get_attendance_status_api(access_token: &str) -> Result<Option<AttendanceItem>, String> {
+    println!("[API] Attendance status API called with token: {}", access_token);
+    let client = reqwest::Client::new();
+    
+    // Get today's date
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    
+    let response = client
+        .get(EMAPTA_ATTENDANCE_ENDPOINT)
+        .header("content-type", "application/json")
+        .header("Authorization", format!("Bearer {}", access_token))
+        .query(&[("date_from", &today), ("date_to", &today)])
+        .send()
+        .await
+        .map_err(|e| format!("Attendance status request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+        println!("[API] Attendance status failed with token: {}, status: {}, error: {}", access_token, status, error_text);
+        return Err(format!("Attendance status failed: {} - {}", status, error_text));
+    }
+
+    let attendance_response: AttendanceApiResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse attendance response: {}", e))?;
+
+    // Find today's attendance record
+    Ok(attendance_response.data.items.into_iter()
+        .find(|item| item.work_date == today))
 }
 
 #[tauri::command]
@@ -124,12 +302,12 @@ pub async fn get_scheduler_state() -> Result<SchedulerState, String> {
     Ok(scheduler.get_state())
 }
 
-/// Set access token for the scheduler
+/// Set access token for the scheduler (deprecated - tokens are now managed in storage)
 #[tauri::command]
-pub async fn set_scheduler_access_token(access_token: Option<String>) -> Result<String, String> {
-    let scheduler = get_scheduler().ok_or("Scheduler not initialized")?;
-    scheduler.set_access_token(access_token);
-    Ok("Access token updated".to_string())
+pub async fn set_scheduler_access_token(_access_token: Option<String>) -> Result<String, String> {
+    // This function is deprecated as we now use storage-first token management
+    // All token management is handled automatically through storage
+    Ok("Token management is now storage-first - no action needed".to_string())
 }
 
 /// Manual clock-in through backend scheduler
@@ -163,6 +341,45 @@ pub async fn scheduler_check_auto_startup() -> Result<bool, String> {
         .map_err(|e| format!("Auto startup check failed: {}", e))
 }
 
+// ============================================================================
+// BACKEND API COMMANDS
+// ============================================================================
+
+/// Exchange refresh token for access token and save both (initial setup)
+#[tauri::command]
+pub async fn api_exchange_refresh_token(
+    app_handle: AppHandle,
+    refresh_token: String,
+) -> Result<TokenResponse, String> {
+    // Exchange token via backend API
+    let token_response = exchange_refresh_token_api(&refresh_token).await
+        .map_err(|e| format!("Token exchange failed: {}", e))?;
+
+    // Save both tokens using shared token manager
+    crate::token_manager::save_initial_tokens(
+        &app_handle,
+        &token_response.refresh_token,
+        &token_response.access_token,
+    ).await
+        .map_err(|e| format!("Failed to save tokens: {}", e))?;
+
+    Ok(token_response)
+}
+
+/// Manual clock in operation using shared token logic
+#[tauri::command]
+pub async fn api_manual_clock_in(app_handle: AppHandle) -> Result<bool, String> {
+    crate::token_manager::clock_in_with_shared_tokens(&app_handle).await
+        .map_err(|e| format!("Manual clock-in failed: {}", e))
+}
+
+/// Manual clock out operation using shared token logic
+#[tauri::command]
+pub async fn api_manual_clock_out(app_handle: AppHandle) -> Result<bool, String> {
+    crate::token_manager::clock_out_with_shared_tokens(&app_handle).await
+        .map_err(|e| format!("Manual clock-out failed: {}", e))
+}
+
 /// Initialize background monitoring for sleep/wake detection
 #[tauri::command]
 pub async fn initialize_background_monitoring(app_handle: AppHandle) -> Result<String, String> {
@@ -176,27 +393,20 @@ pub async fn initialize_background_monitoring(app_handle: AppHandle) -> Result<S
         // Get the scheduler instance
         if let Some(scheduler) = get_scheduler() {
             // Try to load access token from storage first
-            match retrieve_encrypted_data(app_handle.clone(), "access_token".to_string()).await {
-                Ok(Some(token)) => {
-                    println!("Loaded access token from storage for auto-startup");
-                    scheduler.set_access_token(Some(token.clone()));
-                    
-                    // Run initial auto-startup check
-                    match scheduler.check_auto_startup().await {
-                        Ok(clocked_in) => {
-                            if clocked_in {
-                                println!("Initial auto clock-in completed successfully");
-                            } else {
-                                println!("Initial auto clock-in skipped (already clocked in or conditions not met)");
-                            }
-                        }
-                        Err(e) => {
-                            println!("Initial auto clock-in failed: {:?}", e);
-                        }
+            // Check if we have tokens in storage and run auto-startup check
+            // Scheduler will get tokens from storage using storage-first pattern
+
+            // Run initial auto-startup check
+            match scheduler.check_auto_startup().await {
+                Ok(clocked_in) => {
+                    if clocked_in {
+                        println!("Initial auto clock-in completed successfully");
+                    } else {
+                        println!("Initial auto clock-in skipped (already clocked in or conditions not met)");
                     }
                 }
-                Ok(None) | Err(_) => {
-                    println!("No access token found in storage, skipping auto-startup check");
+                Err(e) => {
+                    println!("Initial auto clock-in failed: {:?}", e);
                 }
             }
         } else {
@@ -239,4 +449,95 @@ pub async fn initialize_background_monitoring(app_handle: AppHandle) -> Result<S
     });
     
     Ok("Background monitoring initialized".to_string())
+}
+
+/// Get current attendance status using shared token logic
+#[tauri::command]
+pub async fn api_get_attendance_status(app_handle: AppHandle) -> Result<Option<AttendanceItem>, String> {
+    crate::token_manager::attendance_check_with_shared_tokens(&app_handle).await
+        .map_err(|e| format!("Attendance status check failed: {}", e))
+}
+
+/// Setup both refresh and access tokens with validation (Phase 3 enhancement)
+#[tauri::command]
+pub async fn api_setup_dual_tokens(
+    app_handle: AppHandle,
+    refresh_token: String,
+    access_token: String,
+) -> Result<String, String> {
+    // Validate token format
+    if refresh_token.trim().is_empty() {
+        return Err("Refresh token cannot be empty".to_string());
+    }
+
+    if access_token.trim().is_empty() {
+        return Err("Access token cannot be empty".to_string());
+    }
+
+    // Basic token format validation
+    if refresh_token.len() < 10 {
+        return Err("Refresh token appears too short - please check the token".to_string());
+    }
+
+    if access_token.len() < 10 {
+        return Err("Access token appears too short - please check the token".to_string());
+    }
+
+    // Save both tokens using the shared token manager
+    crate::token_manager::save_initial_tokens(
+        &app_handle,
+        &refresh_token,
+        &access_token,
+    ).await
+        .map_err(|e| format!("Failed to save tokens: {}", e))?;
+
+    // Validate tokens by trying an API call
+    match crate::token_manager::attendance_check_with_shared_tokens(&app_handle).await {
+        Ok(_) => {
+            // Tokens are valid - setup complete
+            Ok("Tokens validated and saved successfully! Setup complete.".to_string())
+        }
+        Err(e) => {
+            // Token validation failed - provide clear error message
+            let error_msg = format!("Token validation failed: {}. Please check your tokens and try again.", e);
+            Err(error_msg)
+        }
+    }
+}
+
+// ============================================================================
+// AUTOSTART COMMANDS (Phase 3 Enhancement)
+// ============================================================================
+
+/// Enable auto-launch on system startup
+#[tauri::command]
+pub async fn enable_autostart(app_handle: AppHandle) -> Result<String, String> {
+    use tauri_plugin_autostart::ManagerExt;
+
+    match app_handle.autolaunch().enable() {
+        Ok(_) => Ok("Auto-launch enabled successfully".to_string()),
+        Err(e) => Err(format!("Failed to enable auto-launch: {}", e))
+    }
+}
+
+/// Disable auto-launch on system startup
+#[tauri::command]
+pub async fn disable_autostart(app_handle: AppHandle) -> Result<String, String> {
+    use tauri_plugin_autostart::ManagerExt;
+
+    match app_handle.autolaunch().disable() {
+        Ok(_) => Ok("Auto-launch disabled successfully".to_string()),
+        Err(e) => Err(format!("Failed to disable auto-launch: {}", e))
+    }
+}
+
+/// Check if auto-launch is currently enabled
+#[tauri::command]
+pub async fn is_autostart_enabled(app_handle: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+
+    match app_handle.autolaunch().is_enabled() {
+        Ok(enabled) => Ok(enabled),
+        Err(e) => Err(format!("Failed to check auto-launch status: {}", e))
+    }
 }

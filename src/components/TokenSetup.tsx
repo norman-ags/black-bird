@@ -1,14 +1,17 @@
-import { useState } from "react";
-import { isValidRefreshTokenFormat } from "../utils/validation";
+import { useState, useId } from "react";
+import { invoke } from '@tauri-apps/api/core';
 import { useAuth } from "../hooks/use-auth";
 
 /**
- * TokenSetup component - collects refresh token from user and validates it
- * Provides secure storage and validation of EMAPTA refresh tokens
+ * TokenSetup component - collects refresh and access tokens from user
+ * Supports both tokens as per automatic attendance tracking scenario
  */
-export default function TokenSetup() {
-  const { authenticate, loading, refreshToken } = useAuth();
-  const [value, setValue] = useState("");
+export default function TokenSetup({ onSave }: { onSave?: () => void }) {
+  const { loading, refreshToken } = useAuth();
+  const refreshTokenId = useId();
+  const accessTokenId = useId();
+  const [refreshTokenValue, setRefreshTokenValue] = useState("");
+  const [accessTokenValue, setAccessTokenValue] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [messageType, setMessageType] = useState<"success" | "error" | "info">(
     "info"
@@ -17,48 +20,64 @@ export default function TokenSetup() {
   console.log({ refreshToken });
 
   /**
-   * Handle form submission for token validation and storage
+   * Handle form submission for dual token setup and validation
    * @param e Form submit event
    */
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setMessage(null);
 
-    // Client-side validation
-    if (!value.trim()) {
+    // Validate both tokens are provided
+    if (!refreshTokenValue.trim()) {
       setMessage("Please enter a refresh token");
       setMessageType("error");
       return;
     }
 
-    if (!isValidRefreshTokenFormat(value.trim())) {
-      setMessage("Token format appears invalid. Please check your token.");
+    if (!accessTokenValue.trim()) {
+      setMessage("Please enter an access token");
       setMessageType("error");
       return;
     }
 
     try {
-      await authenticate(value.trim());
-      setMessage("Token saved and validated successfully");
+      // Use the shared token manager for initial setup
+      await authenticateWithBothTokens(refreshTokenValue.trim(), accessTokenValue.trim());
+      setMessage("Tokens saved and validated successfully! Setup complete.");
       setMessageType("success");
-      setValue(""); // Clear input after successful save
+
+      // Clear inputs after successful save
+      setRefreshTokenValue("");
+      setAccessTokenValue("");
+
+      onSave?.();
     } catch (err: any) {
       const errorMessage = err.message || String(err);
-      setMessage(`Error: ${errorMessage}`);
+      setMessage(`Setup failed: ${errorMessage}`);
       setMessageType("error");
 
       // Log detailed error for debugging
-      console.error("Token validation failed:", err);
+      console.error("Token setup failed:", err);
     }
   }
 
   /**
-   * Handle input change with basic sanitization
-   * @param e Input change event
+   * Authenticate with both refresh and access tokens using Tauri command
    */
-  function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+  async function authenticateWithBothTokens(refreshToken: string, accessToken: string) {
+    // Use the new dual token setup command
+    return await invoke('api_setup_dual_tokens', {
+      refreshToken,
+      accessToken
+    });
+  }
+
+  /**
+   * Handle input changes with basic sanitization
+   */
+  function handleRefreshTokenChange(e: React.ChangeEvent<HTMLInputElement>) {
     const newValue = e.target.value.trim();
-    setValue(newValue);
+    setRefreshTokenValue(newValue);
 
     // Clear previous messages when user starts typing
     if (message) {
@@ -66,30 +85,92 @@ export default function TokenSetup() {
     }
   }
 
+  function handleAccessTokenChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const newValue = e.target.value.trim();
+    setAccessTokenValue(newValue);
+
+    // Clear previous messages when user starts typing
+    if (message) {
+      setMessage(null);
+    }
+  }
+
+  const isFormValid = refreshTokenValue.trim() && accessTokenValue.trim();
+
   console.log({ tokenSETUP: refreshToken });
   return (
     <div className="token-setup">
-      <h2>Refresh Token Setup</h2>
-      <p>Enter your EMAPTA refresh token to enable clock automation:</p>
+      <h2>Token Setup</h2>
+      <p>Enter both EMAPTA tokens to enable automatic clock automation:</p>
 
       <form onSubmit={onSubmit}>
-        <div>
+        <div style={{ marginBottom: "16px" }}>
+          <label
+            htmlFor={refreshTokenId}
+            style={{ display: "block", marginBottom: "8px", fontWeight: "bold" }}
+          >
+            Refresh Token:
+          </label>
           <input
+            id={refreshTokenId}
             type="password"
             placeholder="Enter refresh token"
-            value={value}
-            onChange={handleInputChange}
+            value={refreshTokenValue}
+            onChange={handleRefreshTokenChange}
             disabled={loading}
-            style={{ width: "300px", marginRight: "10px" }}
+            style={{
+              width: "400px",
+              padding: "8px",
+              fontSize: "14px",
+              marginBottom: "8px"
+            }}
           />
-          <button type="submit" disabled={loading || !value.trim()}>
-            {loading ? "Validating..." : "Save Token"}
-          </button>
         </div>
+
+        <div style={{ marginBottom: "16px" }}>
+          <label
+            htmlFor={accessTokenId}
+            style={{ display: "block", marginBottom: "8px", fontWeight: "bold" }}
+          >
+            Access Token:
+          </label>
+          <input
+            id={accessTokenId}
+            type="password"
+            placeholder="Enter access token"
+            value={accessTokenValue}
+            onChange={handleAccessTokenChange}
+            disabled={loading}
+            style={{
+              width: "400px",
+              padding: "8px",
+              fontSize: "14px",
+              marginBottom: "8px"
+            }}
+          />
+        </div>
+
+        <button
+          type="submit"
+          disabled={loading || !isFormValid}
+          style={{
+            padding: "10px 20px",
+            fontSize: "16px",
+            backgroundColor: isFormValid ? "#007bff" : "#ccc",
+            color: "white",
+            border: "none",
+            borderRadius: "4px",
+            cursor: isFormValid ? "pointer" : "not-allowed"
+          }}
+        >
+          {loading ? "Setting up tokens..." : "Save Tokens & Complete Setup"}
+        </button>
       </form>
 
       {refreshToken && (
-        <p style={{ color: "green" }}>✓ Token stored and ready for use</p>
+        <p style={{ color: "green", marginTop: "16px" }}>
+          ✓ Tokens stored and ready for automatic operation
+        </p>
       )}
 
       {message && (
@@ -101,7 +182,22 @@ export default function TokenSetup() {
                 : messageType === "error"
                 ? "red"
                 : "blue",
-            marginTop: "10px",
+            marginTop: "16px",
+            padding: "8px",
+            backgroundColor:
+              messageType === "success"
+                ? "#d4edda"
+                : messageType === "error"
+                ? "#f8d7da"
+                : "#d1ecf1",
+            border: `1px solid ${
+              messageType === "success"
+                ? "#c3e6cb"
+                : messageType === "error"
+                ? "#f5c6cb"
+                : "#bee5eb"
+            }`,
+            borderRadius: "4px",
           }}
         >
           {message}

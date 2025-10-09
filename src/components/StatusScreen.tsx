@@ -2,6 +2,14 @@ import type React from "react";
 import { useEffect, useRef } from "react";
 import { useAuth } from "../hooks/use-auth";
 import { useBackendSchedule } from "../hooks/use-backend-schedule";
+import {
+  useAttendanceQuery,
+  isCurrentlyClocked,
+  getClockInTime,
+  getExpectedClockOutTime,
+  hasCompletedShift,
+  getCompletedShiftDetails,
+} from "../queries/attendance";
 import { invoke } from "@tauri-apps/api/core";
 
 /**
@@ -11,9 +19,21 @@ import { invoke } from "@tauri-apps/api/core";
  * All automation logic is handled by the backend.
  */
 export const StatusScreen: React.FC = () => {
-  const { accessToken } = useAuth();
-  const { schedulerState, manualClockIn, manualClockOut, isLoading, error } =
+  const { refreshToken } = useAuth();
+  const { manualClockIn, manualClockOut, isLoading, error } =
     useBackendSchedule();
+
+  // Use React Query to fetch real attendance status
+  const { data: attendanceData } = useAttendanceQuery();
+
+  // Get real clock status from EMAPTA API data
+  const realIsCurrentlyClockedIn = isCurrentlyClocked(attendanceData ?? null);
+  const realClockInTime = getClockInTime(attendanceData ?? null);
+  const realExpectedClockOutTime = getExpectedClockOutTime(
+    attendanceData ?? null
+  );
+  const shiftCompleted = hasCompletedShift(attendanceData ?? null);
+  const completedShiftDetails = getCompletedShiftDetails(attendanceData ?? null);
 
   const hasInitializedMonitoring = useRef(false);
 
@@ -25,7 +45,7 @@ export const StatusScreen: React.FC = () => {
     if (hasInitializedMonitoring.current) return;
 
     // Only run if authenticated
-    if (!accessToken) return;
+    if (!refreshToken) return;
 
     // Don't run if already loading
     if (isLoading) return;
@@ -51,10 +71,10 @@ export const StatusScreen: React.FC = () => {
     const timeout = setTimeout(initializeMonitoring, 1000);
 
     return () => clearTimeout(timeout);
-  }, [accessToken, isLoading]);
+  }, [refreshToken, isLoading]);
 
   // If not authenticated, show setup prompt
-  if (!accessToken) {
+  if (!refreshToken) {
     return (
       <div style={{ textAlign: "center", padding: "48px 24px" }}>
         <div style={{ marginBottom: "32px" }}>
@@ -91,11 +111,10 @@ export const StatusScreen: React.FC = () => {
     );
   }
 
-  // Get current session info
-  const currentSession = schedulerState?.currentSession;
-  const isCurrentlyClockedIn = currentSession?.clockedIn || false;
-  const clockInTime = currentSession?.clockInTime;
-  const expectedClockOutTime = currentSession?.expectedClockOutTime;
+  // Use real attendance data directly
+  const isCurrentlyClockedIn = realIsCurrentlyClockedIn;
+  const clockInTime = realClockInTime;
+  const expectedClockOutTime = realExpectedClockOutTime;
 
   // Calculate time remaining until clock out
   const getTimeRemaining = () => {
@@ -120,7 +139,11 @@ export const StatusScreen: React.FC = () => {
       {/* Main Status Display */}
       <div style={{ textAlign: "center", marginBottom: "32px" }}>
         <h2 style={{ marginBottom: "16px" }}>
-          {isCurrentlyClockedIn ? "🟢 Currently Working" : "⚪ Not Clocked In"}
+          {isCurrentlyClockedIn
+            ? "🟢 Currently Working"
+            : shiftCompleted
+            ? "✅ Shift Completed"
+            : "⚪ Not Clocked In"}
         </h2>
 
         {isCurrentlyClockedIn && clockInTime && (
@@ -162,7 +185,35 @@ export const StatusScreen: React.FC = () => {
           </div>
         )}
 
-        {!isCurrentlyClockedIn && (
+        {shiftCompleted && completedShiftDetails && (
+          <div
+            style={{
+              background: "#f0fdf4",
+              border: "2px solid #10b981",
+              borderRadius: "12px",
+              padding: "24px",
+              marginBottom: "24px",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "18px",
+                fontWeight: "600",
+                marginBottom: "8px",
+              }}
+            >
+              Work day completed successfully!
+            </div>
+            <div style={{ color: "#6b7280", marginBottom: "4px" }}>
+              Clocked in: {new Date(completedShiftDetails.clockInTime).toLocaleTimeString()}
+            </div>
+            <div style={{ color: "#6b7280" }}>
+              Clocked out: {new Date(completedShiftDetails.clockOutTime).toLocaleTimeString()}
+            </div>
+          </div>
+        )}
+
+        {!isCurrentlyClockedIn && !shiftCompleted && (
           <div
             style={{
               background: "#f9fafb",
@@ -217,14 +268,14 @@ export const StatusScreen: React.FC = () => {
           <button
             type="button"
             onClick={manualClockIn}
-            disabled={isLoading || isCurrentlyClockedIn}
+            disabled={isLoading || isCurrentlyClockedIn || shiftCompleted}
             style={{
               padding: "10px 20px",
-              backgroundColor: isCurrentlyClockedIn ? "#d1d5db" : "#10b981",
+              backgroundColor: (isCurrentlyClockedIn || shiftCompleted) ? "#d1d5db" : "#10b981",
               color: "white",
               border: "none",
               borderRadius: "6px",
-              cursor: isCurrentlyClockedIn ? "not-allowed" : "pointer",
+              cursor: (isCurrentlyClockedIn || shiftCompleted) ? "not-allowed" : "pointer",
               fontSize: "14px",
               fontWeight: "500",
             }}
@@ -235,14 +286,14 @@ export const StatusScreen: React.FC = () => {
           <button
             type="button"
             onClick={() => manualClockOut()}
-            disabled={isLoading || !isCurrentlyClockedIn}
+            disabled={isLoading || !isCurrentlyClockedIn || shiftCompleted}
             style={{
               padding: "10px 20px",
-              backgroundColor: !isCurrentlyClockedIn ? "#d1d5db" : "#ef4444",
+              backgroundColor: (!isCurrentlyClockedIn || shiftCompleted) ? "#d1d5db" : "#ef4444",
               color: "white",
               border: "none",
               borderRadius: "6px",
-              cursor: !isCurrentlyClockedIn ? "not-allowed" : "pointer",
+              cursor: (!isCurrentlyClockedIn || shiftCompleted) ? "not-allowed" : "pointer",
               fontSize: "14px",
               fontWeight: "500",
             }}
@@ -263,7 +314,11 @@ export const StatusScreen: React.FC = () => {
       >
         <div>
           📅 {new Date().toLocaleDateString()} • Status:{" "}
-          {isCurrentlyClockedIn ? "Working" : "Available"}
+          {isCurrentlyClockedIn
+            ? "Working"
+            : shiftCompleted
+            ? "Shift Completed"
+            : "Available"}
         </div>
       </div>
     </div>

@@ -7,6 +7,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::time::sleep;
 
 use crate::errors::AppError;
+use crate::commands::{clock_in_api, clock_out_api, AttendanceItem};
 
 /// Work schedule configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,10 +95,25 @@ pub struct BackendScheduler {
     state: Arc<Mutex<SchedulerState>>,
     schedule: Arc<Mutex<Option<WorkSchedule>>>,
     task_handles: Arc<Mutex<HashMap<String, TaskHandle>>>,
-    access_token: Arc<Mutex<Option<String>>>,
 }
 
 impl BackendScheduler {
+
+    /// Call clock-in API using shared token logic
+    async fn call_clock_in_with_retry(&self) -> Result<bool, AppError> {
+        crate::token_manager::clock_in_with_shared_tokens(&self.app_handle).await
+    }
+
+    /// Call clock-out API using shared token logic
+    async fn call_clock_out_with_retry(&self) -> Result<bool, AppError> {
+        crate::token_manager::clock_out_with_shared_tokens(&self.app_handle).await
+    }
+
+    /// Call attendance API using shared token logic
+    async fn call_attendance_with_retry(&self) -> Result<Option<AttendanceItem>, AppError> {
+        crate::token_manager::attendance_check_with_shared_tokens(&self.app_handle).await
+    }
+
     /// Create a new backend scheduler
     pub fn new(app_handle: AppHandle) -> Self {
         Self {
@@ -114,28 +130,17 @@ impl BackendScheduler {
             })),
             schedule: Arc::new(Mutex::new(None)),
             task_handles: Arc::new(Mutex::new(HashMap::new())),
-            access_token: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Set the access token for API calls
-    pub fn set_access_token(&self, token: Option<String>) {
-        let mut access_token = self.access_token.lock().unwrap();
-        *access_token = token;
-    }
 
     /// Check and perform auto clock-in on app startup
     pub async fn check_auto_startup(&self) -> Result<bool, AppError> {
         println!("[Scheduler] Checking if auto clock-in should run...");
-        
-        // Check if we have an access token
-        let token = {
-            let access_token = self.access_token.lock().unwrap();
-            access_token.clone()
-        };
 
-        if token.is_none() {
-            println!("[Scheduler] No access token available, skipping auto clock-in");
+        // Check if we have tokens available (used for attendance API check)
+        if let Err(e) = crate::token_manager::get_saved_access_token(&self.app_handle).await {
+            println!("[Scheduler] No access token found, skipping auto clock-in: {}", e);
             return Ok(false);
         }
 
@@ -169,6 +174,112 @@ impl BackendScheduler {
 
         // TODO: Add attendance API check for rest days/leave
         // For now, proceed with auto clock-in
+        
+        // Check current attendance status from EMAPTA API
+        println!("[Scheduler] Checking current attendance status from EMAPTA API...");
+        match self.call_attendance_with_retry().await {
+            Ok(Some(attendance)) => {
+                println!("[Scheduler] Current attendance status: {}", attendance.attendance_status);
+
+                // Check if it's a rest day
+                if attendance.is_restday == Some(true) {
+                    println!("[Scheduler] Today is a rest day, skipping auto clock-in");
+                    return Ok(false);
+                }
+
+                // Check if already clocked in today (EXTERNAL CLOCK-IN HANDLING)
+                if attendance.attendance_status == "Started" &&
+                   attendance.date_time_in.is_some() &&
+                   attendance.date_time_out.is_none() {
+
+                    let external_clock_in = attendance.date_time_in.as_ref().unwrap();
+                    println!("[Scheduler] External clock-in detected at: {}", external_clock_in);
+
+                    // Calculate expected clock-out time
+                    match self.calculate_clock_out_from_external(external_clock_in) {
+                        Ok(expected_clock_out) => {
+                            let now = chrono::Utc::now();
+
+                            // Check if we're OVERDUE for clock-out
+                            if now >= expected_clock_out {
+                                println!("[Scheduler] OVERDUE clock-out detected! Expected: {}, Current: {}",
+                                         expected_clock_out.to_rfc3339(), now.to_rfc3339());
+                                println!("[Scheduler] Executing immediate clock-out...");
+
+                                // Execute immediate clock-out (bypass minimum duration)
+                                match self.manual_clock_out(true).await {
+                                    Ok(success) => {
+                                        if success {
+                                            println!("[Scheduler] Overdue clock-out completed successfully");
+                                            return Ok(true); // Report that we took action
+                                        } else {
+                                            println!("[Scheduler] Overdue clock-out failed");
+                                            return Ok(false);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        println!("[Scheduler] Error during overdue clock-out: {:?}", e);
+                                        return Err(e);
+                                    }
+                                }
+                            } else {
+                                // Not overdue yet - schedule missing clock-out
+                                if !self.has_pending_clock_out() {
+                                    println!("[Scheduler] Scheduling missing clock-out for external clock-in");
+                                    match self.schedule_clock_out_from_external(external_clock_in, expected_clock_out).await {
+                                        Ok(_) => {
+                                            println!("[Scheduler] Missing clock-out scheduled successfully");
+                                        }
+                                        Err(e) => {
+                                            println!("[Scheduler] Failed to schedule missing clock-out: {:?}", e);
+                                        }
+                                    }
+                                } else {
+                                    println!("[Scheduler] Clock-out already scheduled");
+                                }
+                                return Ok(false); // Don't proceed with auto clock-in
+                            }
+                        }
+                        Err(e) => {
+                            println!("[Scheduler] Failed to parse external clock-in time: {:?}", e);
+                            println!("[Scheduler] Skipping external clock-in handling");
+                            return Ok(false);
+                        }
+                    }
+                }
+
+                // Check if it's a completed day
+                if attendance.attendance_status == "Completed" {
+                    println!("[Scheduler] Work day already completed, updating session state");
+
+                    // Update session state to reflect completed status
+                    {
+                        let mut state = self.state.lock().unwrap();
+                        state.current_session.clocked_in = false;
+                        state.current_session.clock_in_time = attendance.date_time_in.clone();
+                        state.current_session.expected_clock_out_time = attendance.date_time_out.clone();
+                    }
+
+                    return Ok(false);
+                }
+
+                // Check if on leave
+                if attendance.attendance_status == "On leave" {
+                    println!("[Scheduler] On leave today, skipping auto clock-in");
+                    return Ok(false);
+                }
+
+                println!("[Scheduler] Attendance check passed, proceeding with auto clock-in");
+            }
+            Ok(None) => {
+                println!("[Scheduler] No attendance record found for today, proceeding with auto clock-in");
+            }
+            Err(error) => {
+                println!("[Scheduler] Failed to check attendance status: {}", error);
+                println!("[Scheduler] Proceeding with auto clock-in anyway");
+                // Don't block auto clock-in if API check fails
+            }
+        }
         
         println!("[Scheduler] Conditions met, attempting auto clock-in...");
         
@@ -254,18 +365,9 @@ impl BackendScheduler {
     /// Manual clock in
     pub async fn manual_clock_in(&self) -> Result<bool, AppError> {
         println!("[Scheduler] Manual clock in requested");
-        
-        let token = {
-            let access_token = self.access_token.lock().unwrap();
-            access_token.clone()
-        };
 
-        if token.is_none() {
-            return Err(AppError::authentication("No access token available".to_string()));
-        }
-
-        // Simulate API call (replace with actual API call)
-        let success = self.call_clock_in_api(&token.unwrap()).await?;
+        // Call clock-in API with retry logic
+        let success = self.call_clock_in_with_retry().await?;
         
         if success {
             let now = chrono::Utc::now().to_rfc3339();
@@ -300,22 +402,13 @@ impl BackendScheduler {
     /// Manual clock out
     pub async fn manual_clock_out(&self, bypass_minimum: bool) -> Result<bool, AppError> {
         println!("[Scheduler] Manual clock out requested (bypass_minimum: {})", bypass_minimum);
-        
+
         if !bypass_minimum && !self.can_clock_out() {
             return Err(AppError::validation("operation", "Cannot clock out before minimum work duration"));
         }
 
-        let token = {
-            let access_token = self.access_token.lock().unwrap();
-            access_token.clone()
-        };
-
-        if token.is_none() {
-            return Err(AppError::authentication("No access token available".to_string()));
-        }
-
-        // Simulate API call (replace with actual API call)
-        let success = self.call_clock_out_api(&token.unwrap()).await?;
+        // Call clock-out API with retry logic
+        let success = self.call_clock_out_with_retry().await?;
         
         if success {
             let now = chrono::Utc::now().to_rfc3339();
@@ -396,7 +489,6 @@ impl BackendScheduler {
         // Create shared state for the async task
         let app_handle = self.app_handle.clone();
         let state = Arc::clone(&self.state);
-        let access_token = Arc::clone(&self.access_token);
         let schedule_ref = Arc::clone(&self.schedule);
         let operation_id_clone = operation_id.clone();
         
@@ -410,7 +502,6 @@ impl BackendScheduler {
             let _ = execute_scheduled_clock_in(
                 app_handle,
                 state,
-                access_token,
                 schedule_ref,
                 &operation_id_clone
             ).await;
@@ -465,7 +556,6 @@ impl BackendScheduler {
         // Create shared state for the async task
         let app_handle = self.app_handle.clone();
         let state = Arc::clone(&self.state);
-        let access_token = Arc::clone(&self.access_token);
         let schedule_ref = Arc::clone(&self.schedule);
         let operation_id_clone = operation_id.clone();
         
@@ -479,7 +569,6 @@ impl BackendScheduler {
             let _ = execute_scheduled_clock_out(
                 app_handle,
                 state,
-                access_token,
                 schedule_ref,
                 &operation_id_clone
             ).await;
@@ -500,150 +589,6 @@ impl BackendScheduler {
         Ok(())
     }
 
-    /// Execute automatic clock-in
-    async fn execute_clock_in(&self, operation_id: &str) -> Result<(), AppError> {
-        println!("[Scheduler] Executing automatic clock-in: {}", operation_id);
-        
-        let token = {
-            let access_token = self.access_token.lock().unwrap();
-            access_token.clone()
-        };
-
-        let result = if let Some(token) = token {
-            self.call_clock_in_api(&token).await
-        } else {
-            Err(AppError::authentication("No access token available".to_string()))
-        };
-
-        let now = chrono::Utc::now().to_rfc3339();
-
-        // Update operation status
-        {
-            let mut state = self.state.lock().unwrap();
-            if let Some(operation) = state.pending_operations.iter_mut().find(|op| op.id == operation_id) {
-                operation.actual_time = Some(now.clone());
-                
-                match result {
-                    Ok(true) => {
-                        operation.status = "completed".to_string();
-                        
-                        // Update session state
-                        let expected_clock_out = self.calculate_expected_clock_out_time(&now);
-                        state.current_session.clocked_in = true;
-                        state.current_session.clock_in_time = Some(now.clone());
-                        state.current_session.expected_clock_out_time = Some(expected_clock_out);
-                        
-                        // Emit success event
-                        let _ = self.app_handle.emit("scheduler_event", &SchedulerEvent::ClockInSucceeded {
-                            operation_id: operation_id.to_string(),
-                            actual_time: now,
-                        });
-                        
-                        // Schedule clock out
-                        let _ = self.schedule_clock_out().await;
-                    }
-                    Ok(false) => {
-                        operation.status = "failed".to_string();
-                        operation.error_message = Some("Clock-in API returned false".to_string());
-                        
-                        let _ = self.app_handle.emit("scheduler_event", &SchedulerEvent::ClockInFailed {
-                            operation_id: operation_id.to_string(),
-                            error: "API returned false".to_string(),
-                        });
-                    }
-                    Err(err) => {
-                        operation.status = "failed".to_string();
-                        operation.error_message = Some(err.to_string());
-                        
-                        let _ = self.app_handle.emit("scheduler_event", &SchedulerEvent::ClockInFailed {
-                            operation_id: operation_id.to_string(),
-                            error: err.to_string(),
-                        });
-                    }
-                }
-            }
-        }
-
-        // Remove task handle
-        {
-            let mut handles = self.task_handles.lock().unwrap();
-            handles.remove(operation_id);
-        }
-
-        Ok(())
-    }
-
-    /// Execute automatic clock-out
-    async fn execute_clock_out(&self, operation_id: &str) -> Result<(), AppError> {
-        println!("[Scheduler] Executing automatic clock-out: {}", operation_id);
-        
-        let token = {
-            let access_token = self.access_token.lock().unwrap();
-            access_token.clone()
-        };
-
-        let result = if let Some(token) = token {
-            self.call_clock_out_api(&token).await
-        } else {
-            Err(AppError::authentication("No access token available".to_string()))
-        };
-
-        let now = chrono::Utc::now().to_rfc3339();
-
-        // Update operation status
-        {
-            let mut state = self.state.lock().unwrap();
-            if let Some(operation) = state.pending_operations.iter_mut().find(|op| op.id == operation_id) {
-                operation.actual_time = Some(now.clone());
-                
-                match result {
-                    Ok(true) => {
-                        operation.status = "completed".to_string();
-                        
-                        // Update session state
-                        state.current_session.clocked_in = false;
-                        state.current_session.clock_in_time = None;
-                        state.current_session.expected_clock_out_time = None;
-                        
-                        // Emit success event
-                        let _ = self.app_handle.emit("scheduler_event", &SchedulerEvent::ClockOutSucceeded {
-                            operation_id: operation_id.to_string(),
-                            actual_time: now,
-                        });
-                        
-                        // Schedule next clock in
-                        let _ = self.schedule_next_clock_in().await;
-                    }
-                    Ok(false) => {
-                        operation.status = "failed".to_string();
-                        operation.error_message = Some("Clock-out API returned false".to_string());
-                        
-                        let _ = self.app_handle.emit("scheduler_event", &SchedulerEvent::ClockOutFailed {
-                            operation_id: operation_id.to_string(),
-                            error: "API returned false".to_string(),
-                        });
-                    }
-                    Err(err) => {
-                        operation.status = "failed".to_string();
-                        operation.error_message = Some(err.to_string());
-                        
-                        let _ = self.app_handle.emit("scheduler_event", &SchedulerEvent::ClockOutFailed {
-                            operation_id: operation_id.to_string(),
-                            error: err.to_string(),
-                        });
-                    }
-                }
-            }
-        }
-
-        // Remove task handle
-        {
-            let mut handles = self.task_handles.lock().unwrap();
-            handles.remove(operation_id);
-        }
-
-        Ok(())
-    }
 
     /// Cancel all scheduled tasks
     async fn cancel_all_tasks(&self) {
@@ -689,76 +634,138 @@ impl BackendScheduler {
                 return clock_out_dt.to_rfc3339();
             }
         }
-        
+
         // Fallback: 9 hours from now
         (chrono::Utc::now() + chrono::Duration::hours(9)).to_rfc3339()
     }
 
-    /// Simulate clock-in API call (replace with actual implementation)
-    async fn call_clock_in_api(&self, _access_token: &str) -> Result<bool, AppError> {
-        // TODO: Replace with actual API call to EMAPTA
-        println!("[Scheduler] Calling clock-in API...");
-        
-        // Simulate network delay
-        sleep(Duration::from_millis(500)).await;
-        
-        // Simulate success (90% success rate for testing)
-        let success = rand::random::<f32>() > 0.1;
-        
-        if success {
-            println!("[Scheduler] Clock-in API succeeded");
-            Ok(true)
+    /// Calculate expected clock-out time from external clock-in (EMAPTA date format)
+    fn calculate_clock_out_from_external(&self, external_clock_in: &str) -> Result<DateTime<chrono::Utc>, AppError> {
+        // Parse EMAPTA datetime format (assuming ISO 8601 or similar)
+        let clock_in_dt = DateTime::parse_from_rfc3339(external_clock_in)
+            .or_else(|_| {
+                // Try parsing without timezone info (add UTC if missing)
+                if !external_clock_in.contains('T') {
+                    // Format: "2024-10-09 09:00:00" -> "2024-10-09T09:00:00Z"
+                    let with_t = external_clock_in.replace(' ', "T");
+                    let with_tz = if with_t.ends_with('Z') || with_t.contains('+') || with_t.contains('-') {
+                        with_t
+                    } else {
+                        format!("{}Z", with_t)
+                    };
+                    DateTime::parse_from_rfc3339(&with_tz)
+                } else {
+                    DateTime::parse_from_rfc3339(external_clock_in)
+                }
+            })
+            .map_err(|_| AppError::validation("time", "Invalid external clock-in time format"))?;
+
+        let schedule = self.schedule.lock().unwrap();
+        let work_duration = if let Some(schedule) = &*schedule {
+            schedule.min_work_duration_minutes as i64
         } else {
-            println!("[Scheduler] Clock-in API failed");
-            Err(AppError::api("Clock-in API failed".to_string(), Some(500)))
-        }
+            540 // Default 9 hours
+        };
+
+        Ok((clock_in_dt + chrono::Duration::minutes(work_duration)).with_timezone(&chrono::Utc))
     }
 
-    /// Simulate clock-out API call (replace with actual implementation)
-    async fn call_clock_out_api(&self, _access_token: &str) -> Result<bool, AppError> {
-        // TODO: Replace with actual API call to EMAPTA
-        println!("[Scheduler] Calling clock-out API...");
-        
-        // Simulate network delay
-        sleep(Duration::from_millis(500)).await;
-        
-        // Simulate success (90% success rate for testing)
-        let success = rand::random::<f32>() > 0.1;
-        
-        if success {
-            println!("[Scheduler] Clock-out API succeeded");
-            Ok(true)
-        } else {
-            println!("[Scheduler] Clock-out API failed");
-            Err(AppError::api("Clock-out API failed".to_string(), Some(500)))
+    /// Schedule clock-out for external clock-in
+    async fn schedule_clock_out_from_external(&self, external_clock_in: &str, expected_clock_out: DateTime<chrono::Utc>) -> Result<(), AppError> {
+        println!("[Scheduler] Scheduling clock-out for external clock-in at: {}", expected_clock_out.to_rfc3339());
+
+        let operation_id = format!("clock_out_external_{}", expected_clock_out.timestamp());
+
+        // Update session state to reflect external clock-in
+        {
+            let mut state = self.state.lock().unwrap();
+            state.current_session.clocked_in = true;
+            state.current_session.clock_in_time = Some(external_clock_in.to_string());
+            state.current_session.expected_clock_out_time = Some(expected_clock_out.to_rfc3339());
+
+            // Add to pending operations
+            state.pending_operations.push(ScheduledOperation {
+                id: operation_id.clone(),
+                operation_type: OperationType::ClockOut,
+                scheduled_time: expected_clock_out.to_rfc3339(),
+                status: "pending".to_string(),
+                actual_time: None,
+                error_message: None,
+            });
         }
+
+        // Create shared state for the async task
+        let app_handle = self.app_handle.clone();
+        let state = Arc::clone(&self.state);
+        let schedule_ref = Arc::clone(&self.schedule);
+        let operation_id_clone = operation_id.clone();
+
+        let delay = (expected_clock_out.timestamp() - chrono::Utc::now().timestamp()) as u64;
+        let delay_duration = Duration::from_secs(delay.max(1)); // Minimum 1 second delay
+
+        let task = tokio::spawn(async move {
+            sleep(delay_duration).await;
+
+            // Execute clock out
+            let _ = execute_scheduled_clock_out(
+                app_handle,
+                state,
+                schedule_ref,
+                &operation_id_clone
+            ).await;
+        });
+
+        // Store task handle
+        {
+            let mut handles = self.task_handles.lock().unwrap();
+            handles.insert(operation_id.clone(), task);
+        }
+
+        // Emit event
+        let _ = self.app_handle.emit("scheduler_event", &SchedulerEvent::ClockOutScheduled {
+            operation_id,
+            scheduled_time: expected_clock_out.to_rfc3339(),
+        });
+
+        Ok(())
     }
+
+    /// Check if we have any pending clock-out operations
+    fn has_pending_clock_out(&self) -> bool {
+        let state = self.state.lock().unwrap();
+        state.pending_operations.iter().any(|op| {
+            matches!(op.operation_type, OperationType::ClockOut) && op.status == "pending"
+        })
+    }
+
 }
 
 // ============================================================================
 // STANDALONE EXECUTION FUNCTIONS (for async tasks)
 // ============================================================================
 
+
+/// Call clock-in API using shared token logic (standalone)
+async fn call_clock_in_with_retry_standalone(app_handle: &AppHandle) -> Result<bool, AppError> {
+    crate::token_manager::clock_in_with_shared_tokens(app_handle).await
+}
+
+/// Call clock-out API using shared token logic (standalone)
+async fn call_clock_out_with_retry_standalone(app_handle: &AppHandle) -> Result<bool, AppError> {
+    crate::token_manager::clock_out_with_shared_tokens(app_handle).await
+}
+
 /// Execute automatic clock-in (standalone function to avoid Send issues)
 async fn execute_scheduled_clock_in(
     app_handle: AppHandle,
     state: Arc<Mutex<SchedulerState>>,
-    access_token: Arc<Mutex<Option<String>>>,
     schedule: Arc<Mutex<Option<WorkSchedule>>>,
     operation_id: &str,
 ) -> Result<(), AppError> {
     println!("[Scheduler] Executing automatic clock-in: {}", operation_id);
-    
-    let token = {
-        let access_token = access_token.lock().unwrap();
-        access_token.clone()
-    };
 
-    let result = if let Some(token) = token {
-        call_clock_in_api_standalone(&token).await
-    } else {
-        Err(AppError::authentication("No access token available".to_string()))
-    };
+    // Use storage-first pattern with retry logic
+    let result = call_clock_in_with_retry_standalone(&app_handle).await;
 
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -813,22 +820,13 @@ async fn execute_scheduled_clock_in(
 async fn execute_scheduled_clock_out(
     app_handle: AppHandle,
     state: Arc<Mutex<SchedulerState>>,
-    access_token: Arc<Mutex<Option<String>>>,
     _schedule: Arc<Mutex<Option<WorkSchedule>>>,
     operation_id: &str,
 ) -> Result<(), AppError> {
     println!("[Scheduler] Executing automatic clock-out: {}", operation_id);
-    
-    let token = {
-        let access_token = access_token.lock().unwrap();
-        access_token.clone()
-    };
 
-    let result = if let Some(token) = token {
-        call_clock_out_api_standalone(&token).await
-    } else {
-        Err(AppError::authentication("No access token available".to_string()))
-    };
+    // Use storage-first pattern with retry logic
+    let result = call_clock_out_with_retry_standalone(&app_handle).await;
 
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -878,45 +876,6 @@ async fn execute_scheduled_clock_out(
     Ok(())
 }
 
-/// Standalone clock-in API call
-async fn call_clock_in_api_standalone(_access_token: &str) -> Result<bool, AppError> {
-    // TODO: Replace with actual API call to EMAPTA
-    println!("[Scheduler] Calling clock-in API...");
-    
-    // Simulate network delay
-    sleep(Duration::from_millis(500)).await;
-    
-    // Simulate success (90% success rate for testing)
-    let success = rand::random::<f32>() > 0.1;
-    
-    if success {
-        println!("[Scheduler] Clock-in API succeeded");
-        Ok(true)
-    } else {
-        println!("[Scheduler] Clock-in API failed");
-        Err(AppError::api("Clock-in API failed".to_string(), Some(500)))
-    }
-}
-
-/// Standalone clock-out API call
-async fn call_clock_out_api_standalone(_access_token: &str) -> Result<bool, AppError> {
-    // TODO: Replace with actual API call to EMAPTA
-    println!("[Scheduler] Calling clock-out API...");
-    
-    // Simulate network delay
-    sleep(Duration::from_millis(500)).await;
-    
-    // Simulate success (90% success rate for testing)
-    let success = rand::random::<f32>() > 0.1;
-    
-    if success {
-        println!("[Scheduler] Clock-out API succeeded");
-        Ok(true)
-    } else {
-        println!("[Scheduler] Clock-out API failed");
-        Err(AppError::api("Clock-out API failed".to_string(), Some(500)))
-    }
-}
 
 /// Calculate expected clock-out time (standalone)
 fn calculate_expected_clock_out_time_standalone(

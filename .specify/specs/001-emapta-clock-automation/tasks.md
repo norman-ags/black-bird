@@ -150,6 +150,37 @@ Based on updated requirements for ultra-simple user experience: setup once, then
 - [x] T108 [Backend] Move auto clock-in to backend: migrate auto-startup logic from frontend useAutoStartup hook to backend scheduler initialization for better reliability. ✅
 - [x] T109 [Backend] Update StatusScreen for pure display: remove auto-startup integration from frontend component, make it display-only with emergency manual controls. ✅
 
+**Phase 4.6.1: Token Management & Skip Setup (Priority: P1)**
+
+Based on user feedback for seamless token management and setup skip functionality.
+
+- [x] T109.1 [Auth] Implement token-aware app routing: check for stored refresh_token on startup and skip setup screen if found. ✅
+- [ ] T109.2 [Auth] Add automatic token refresh during clock operations: refresh tokens before each API call and save new tokens.
+- [ ] T109.3 [Auth] Update backend auto clock-in to include token refresh: ensure tokens are refreshed and saved during automatic operations.
+- [ ] T109.4 [Auth] Add token refresh to gap detection: when wake detection triggers auto clock-in, refresh and save tokens.
+- [ ] T109.5 [Frontend] Update App.tsx routing logic: implement token check to determine whether to show setup or status screen.
+
+**Phase 4.6.2: Storage-First Token Management Implementation (Priority: P1)**
+
+Based on plan requirements for consistent token refresh across all operations and the scenario: "Clock-in check → If fails, refresh token → Save tokens → Retry once".
+
+- [ ] T109.6 [Backend] Modify scheduler structure: Add AppHandle parameter to scheduler API methods (call_clock_in_api, call_clock_out_api, check_auto_startup) to enable storage access for token refresh operations.
+- [ ] T109.7 [Backend] Implement storage-first token refresh in scheduler: Replace in-memory token logic with storage-based pattern matching api_manual_clock_in around line 380 in commands.rs. Each scheduler operation should: get refresh_token from storage → exchange for new tokens → store new tokens → use fresh token.
+- [ ] T109.8 [Backend] Add comprehensive retry logic with double token refresh: Implement scenario-compliant retry pattern: 1st attempt with fresh token → if fails, refresh again → save tokens → retry once → if still fails, return error. This covers the "refresh token → save → retry once" requirement.
+- [ ] T109.9 [Backend] Update attendance API with storage-first pattern: Apply same storage-based token refresh to get_attendance_status_api calls in scheduler, ensuring attendance checking uses fresh tokens with retry logic.
+- [ ] T109.10 [Backend] Remove in-memory token management: Clean up scheduler by removing access_token Arc<Mutex<Option<String>>>, set_access_token method, and all in-memory token references to eliminate dual token management.
+- [ ] T109.11 [Backend] Update scheduler command interfaces: Modify scheduler commands in commands.rs to pass AppHandle to scheduler methods and remove scheduler.set_access_token calls from manual API commands.
+- [ ] T109.12 [Backend] Update background monitoring for storage-first: Remove scheduler.set_access_token calls from initialize_background_monitoring and ensure gap detection uses storage-based token refresh.
+- [ ] T109.13 [Backend] Set 9-hour default for automatic operations: Update calculate_expected_clock_out_time to default to 540 minutes (9 hours) for automatic clock-out operations while preserving manual duration controls.
+- [ ] T109.14 [Integration] Test storage-first token management: Verify all operations (manual commands, scheduler operations, attendance checking, gap detection) use consistent storage-first pattern with proper token refresh and retry logic.
+
+**Implementation Notes:**
+
+- Tasks T109.6-T109.14 implement the storage-first approach where ALL operations follow the same pattern: storage.retrieve("refresh_token") → exchange_refresh_token_api → storage.store(new_tokens) → API_call
+- This eliminates the dual token management issue and ensures consistent behavior between manual commands and scheduler operations
+- The retry logic implements the exact scenario: "If clock-in fails → Refresh token → Save new tokens → Retry once → If retry fails → Do nothing"
+- These tasks align with plan.md requirement: "Token refresh: Automatic during all API operations, save new tokens"
+
 **Later: Tray Integration (Phase 4.7)**
 
 - [ ] T110 [Tray] Implement system tray integration: app runs in background, minimize to tray instead of exit, tray icon with status indicator and context menu.

@@ -10,6 +10,7 @@ mod commands;
 mod storage;
 mod errors;
 mod scheduler;
+mod token_manager;
 
 use crate::commands::*;
 use crate::errors::setup_error_handler;
@@ -48,6 +49,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
         .setup(setup_app)
         .invoke_handler(tauri::generate_handler![
             // Storage commands
@@ -71,6 +73,18 @@ pub fn run() {
             scheduler_check_auto_startup,
             initialize_background_monitoring,
             
+            // Backend API commands
+            api_exchange_refresh_token,
+            api_manual_clock_in,
+            api_manual_clock_out,
+            api_get_attendance_status,
+            api_setup_dual_tokens,
+
+            // Autostart commands (Phase 3 Enhancement)
+            enable_autostart,
+            disable_autostart,
+            is_autostart_enabled,
+
             // Legacy greeting command (can be removed in production)
             greet
         ])

@@ -1,14 +1,15 @@
 import { useState } from "react";
-import { clockIn, clockOut } from "../services/clock-service";
+import { invoke } from "@tauri-apps/api/core";
 
-export function useClock(accessToken: string | null) {
+export function useClock() {
   const [busy, setBusy] = useState(false);
 
   async function doClockIn() {
     setBusy(true);
     try {
-      const res = await clockIn(accessToken);
-      return res;
+      // Call backend API command instead of frontend service
+      const success = await invoke<boolean>("api_manual_clock_in");
+      return success;
     } finally {
       setBusy(false);
     }
@@ -17,8 +18,9 @@ export function useClock(accessToken: string | null) {
   async function doClockOut() {
     setBusy(true);
     try {
-      const res = await clockOut(accessToken);
-      return res;
+      // Call backend API command instead of frontend service
+      const success = await invoke<boolean>("api_manual_clock_out");
+      return success;
     } finally {
       setBusy(false);
     }

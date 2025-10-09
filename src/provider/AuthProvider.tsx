@@ -21,22 +21,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const [refreshToken, setRefreshToken] = useState<string | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // Start with loading true
 
   useEffect(() => {
     (async () => {
-      // const stored = await getStoredRefreshToken();
-      const stored = "test_token";
-      if (stored) setRefreshToken(stored);
+      try {
+        const stored = await getStoredRefreshToken();
+        if (stored) {
+          setRefreshToken(stored);
+          // We could also try to get a fresh access token here
+          // but we'll let the backend handle that automatically
+        }
+      } catch (error) {
+        console.error("Failed to load stored refresh token:", error);
+      } finally {
+        setLoading(false);
+      }
     })();
   }, []);
 
   async function authenticate(userToken: string) {
     setLoading(true);
     try {
-      // const resp = await validateAndStoreRefreshToken(userToken);
-      setRefreshToken("test_token");
-      setAccessToken("test_access_token");
+      const tokenResponse = await validateAndStoreRefreshToken(userToken);
+      setRefreshToken(tokenResponse.refresh_token);
+      setAccessToken(tokenResponse.access_token);
+    } catch (error) {
+      console.error("Authentication failed:", error);
+      throw error; // Re-throw so the UI can handle it
     } finally {
       setLoading(false);
     }
