@@ -8,7 +8,10 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "status": "node scripts/dev-status.js"
+    "tauri:build": "tauri build",
+    "tauri:build:windows": "tauri build --features system-tray --target x86_64-pc-windows-gnu",
+    "status": "node scripts/dev-status.js",
+    "clear-storage": "rm -rf ~/.cache/black-bird ~/.local/share/com.norman.black-bird ~/.local/share/com.blackbird.dev"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.2",

@@ -29,3 +29,7 @@ tokio = { version = "1.0", features = ["full"] }
 rand = "0.8"
 reqwest = { version = "0.12", features = ["json"] }
 
+[features]
+default = []
+system-tray = ["tauri/tray-icon"]
+

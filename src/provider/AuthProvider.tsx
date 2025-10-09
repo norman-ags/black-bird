@@ -8,9 +8,11 @@ export const AuthContext = React.createContext<{
   refreshToken: string | null;
   accessToken: string | null;
   authenticate: (token: string) => Promise<void>;
+  reloadTokens: () => Promise<void>;
   loading: boolean;
 }>({
   authenticate: async () => {},
+  reloadTokens: async () => {},
   loading: false,
   refreshToken: null,
   accessToken: null,
@@ -23,20 +25,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true); // Start with loading true
 
+  const reloadTokens = async () => {
+    try {
+      const stored = await getStoredRefreshToken();
+      if (stored) {
+        setRefreshToken(stored);
+        // We could also try to get a fresh access token here
+        // but we'll let the backend handle that automatically
+      }
+    } catch (error) {
+      console.error("Failed to load stored refresh token:", error);
+    }
+  };
+
   useEffect(() => {
     (async () => {
-      try {
-        const stored = await getStoredRefreshToken();
-        if (stored) {
-          setRefreshToken(stored);
-          // We could also try to get a fresh access token here
-          // but we'll let the backend handle that automatically
-        }
-      } catch (error) {
-        console.error("Failed to load stored refresh token:", error);
-      } finally {
-        setLoading(false);
-      }
+      setLoading(true);
+      await reloadTokens();
+      setLoading(false);
     })();
   }, []);
 
@@ -56,7 +62,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   return (
     <AuthContext.Provider
-      value={{ refreshToken, accessToken, authenticate, loading }}
+      value={{ refreshToken, accessToken, authenticate, reloadTokens, loading }}
     >
       {children}
     </AuthContext.Provider>

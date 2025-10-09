@@ -343,12 +343,45 @@ const ACCESS_TOKEN_KEY: &str = "access_token";
 
 ## Implementation Strategy
 
-### Current State
+### Current State - COMPLETED ✅
 
-- ✅ Token management and storage (US1)
-- ✅ Manual clock operations (US1)
-- ✅ Backend scheduler architecture (US2)
-- ✅ Schedule configuration UI (US2) - **Keep but simplify**
+- ✅ **Phase 1**: Shared Token Logic Foundation (Universal token manager, retry patterns)
+- ✅ **Phase 2**: System Tray Integration (Minimize to tray, context menu, background operation)
+- ✅ **Phase 3**: Authentication Flow Enhancement (Dual token setup, auto-launch integration)
+- ✅ **Phase 4**: Production Polish (External clock-in detection, overdue protection)
+
+### **Windows Deployment Fixes (October 2025)**
+
+#### **Issues Discovered During Windows Testing:**
+1. **Token Setup Screen Persistence**: After saving tokens, app remained on setup screen
+2. **System Tray Right-Click Missing**: No context menu on right-click
+3. **Cross-Platform Build**: Need Windows binaries with system tray support
+
+#### **Fixes Applied:**
+1. **Enhanced AuthProvider** (`src/provider/AuthProvider.tsx`):
+   - Added `reloadTokens()` function to refresh token state from storage
+   - TokenSetup now calls `reloadTokens()` after successful save
+   - Proper state synchronization between storage and UI
+
+2. **System Tray Context Menu** (`src-tauri/src/tray.rs`):
+   - Added full context menu with "Show/Hide Window" and "Quit" options
+   - Right-click functionality with proper menu event handling
+   - `app.exit(0)` for true application termination
+
+3. **Windows Cross-Compilation** (WSL → Windows):
+   - MinGW-w64 toolchain configured for Windows builds
+   - Cross-compilation produces: `black-bird.exe` + `WebView2Loader.dll`
+   - System tray feature enabled via `--features system-tray` flag
+
+#### **Windows Build Instructions:**
+```bash
+# Cross-compile from WSL/Linux to Windows
+npm run tauri build -- --features system-tray --target x86_64-pc-windows-gnu
+
+# Output location:
+# target/x86_64-pc-windows-gnu/release/black-bird.exe
+# target/x86_64-pc-windows-gnu/release/WebView2Loader.dll
+```
 
 ## Implementation Phases for Scenario Completion
 

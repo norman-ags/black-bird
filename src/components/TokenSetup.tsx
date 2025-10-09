@@ -7,7 +7,7 @@ import { useAuth } from "../hooks/use-auth";
  * Supports both tokens as per automatic attendance tracking scenario
  */
 export default function TokenSetup({ onSave }: { onSave?: () => void }) {
-  const { loading, refreshToken } = useAuth();
+  const { loading, refreshToken, reloadTokens } = useAuth();
   const refreshTokenId = useId();
   const accessTokenId = useId();
   const [refreshTokenValue, setRefreshTokenValue] = useState("");
@@ -49,6 +49,9 @@ export default function TokenSetup({ onSave }: { onSave?: () => void }) {
       // Clear inputs after successful save
       setRefreshTokenValue("");
       setAccessTokenValue("");
+
+      // Reload tokens from storage to update AuthProvider state
+      await reloadTokens();
 
       onSave?.();
     } catch (err: any) {

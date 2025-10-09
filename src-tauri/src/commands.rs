@@ -126,11 +126,13 @@ pub async fn exchange_refresh_token_api(refresh_token: &str) -> Result<TokenResp
 pub async fn clock_in_api(access_token: &str) -> Result<bool, String> {
     println!("[API] Clock-in API called with token: {}", access_token);
     let client = reqwest::Client::new();
-    
+
     let response = client
         .post(EMAPTA_LOGIN_ENDPOINT)
+        .header("application-type", "KEYCLOAK")
+        .header("client-code", "EMAPTA-MYEMAPTA")
+        .header("authorization", format!("Bearer {}", access_token))
         .header("content-type", "application/json")
-        .header("Authorization", format!("Bearer {}", access_token))
         .json(&serde_json::json!({}))
         .send()
         .await
@@ -150,11 +152,13 @@ pub async fn clock_in_api(access_token: &str) -> Result<bool, String> {
 pub async fn clock_out_api(access_token: &str) -> Result<bool, String> {
     println!("[API] Clock-out API called with token: {}", access_token);
     let client = reqwest::Client::new();
-    
+
     let response = client
         .post(EMAPTA_LOGOUT_ENDPOINT)
+        .header("application-type", "KEYCLOAK")
+        .header("client-code", "EMAPTA-MYEMAPTA")
+        .header("authorization", format!("Bearer {}", access_token))
         .header("content-type", "application/json")
-        .header("Authorization", format!("Bearer {}", access_token))
         .json(&serde_json::json!({}))
         .send()
         .await
@@ -174,14 +178,16 @@ pub async fn clock_out_api(access_token: &str) -> Result<bool, String> {
 pub async fn get_attendance_status_api(access_token: &str) -> Result<Option<AttendanceItem>, String> {
     println!("[API] Attendance status API called with token: {}", access_token);
     let client = reqwest::Client::new();
-    
+
     // Get today's date
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    
+
     let response = client
         .get(EMAPTA_ATTENDANCE_ENDPOINT)
+        .header("application-type", "KEYCLOAK")
+        .header("client-code", "EMAPTA-MYEMAPTA")
+        .header("authorization", format!("Bearer {}", access_token))
         .header("content-type", "application/json")
-        .header("Authorization", format!("Bearer {}", access_token))
         .query(&[("date_from", &today), ("date_to", &today)])
         .send()
         .await
@@ -223,9 +229,12 @@ pub async fn retrieve_encrypted_data(
     app_handle: AppHandle,
     key: String,
 ) -> Result<Option<String>, String> {
+    println!("[Storage] Frontend requesting retrieval for key: '{}'", key);
     validate_storage_key(&key).map_err(|e| format!("Key validation failed: {}", e))?;
     let storage = create_storage_backend(app_handle).map_err(|e| format!("Failed to create storage backend: {}", e))?;
-    storage.retrieve(&key).await.map_err(|e| format!("Retrieval operation failed: {}", e))
+    let result = storage.retrieve(&key).await.map_err(|e| format!("Retrieval operation failed: {}", e))?;
+    println!("[Storage] Retrieved value for key '{}': {}", key, if result.is_some() { "found" } else { "not found" });
+    Ok(result)
 }
 
 #[tauri::command]

@@ -11,6 +11,8 @@ mod storage;
 mod errors;
 mod scheduler;
 mod token_manager;
+#[cfg(feature = "system-tray")]
+mod tray;
 
 use crate::commands::*;
 use crate::errors::setup_error_handler;
@@ -38,7 +40,27 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize scheduler
     crate::scheduler::initialize_scheduler(app_handle.clone());
     println!("Scheduler initialized successfully");
-    
+
+    // Initialize system tray (only on supported platforms)
+    #[cfg(feature = "system-tray")]
+    {
+        match crate::tray::create_system_tray(&app_handle) {
+            Ok(_) => {
+                println!("System tray initialized successfully");
+            }
+            Err(e) => {
+                println!("WARNING: System tray failed to initialize: {}", e);
+                println!("INFO: App will run normally without system tray. Window management still works.");
+            }
+        }
+    }
+
+    #[cfg(not(feature = "system-tray"))]
+    {
+        println!("INFO: System tray feature disabled (normal for development in WSL/headless environments)");
+        println!("INFO: Window close behavior and all other functionality works normally.");
+    }
+
     Ok(())
 }
 
@@ -51,6 +73,18 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
         .setup(setup_app)
+        .on_window_event(|window, event| {
+            use tauri::WindowEvent;
+            match event {
+                WindowEvent::CloseRequested { api, .. } => {
+                    // Prevent window from closing, hide it instead (minimize to tray)
+                    let _ = window.hide();
+                    api.prevent_close();
+                    println!("[Window] Close requested - minimized to tray instead");
+                }
+                _ => {}
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             // Storage commands
             store_encrypted_data,

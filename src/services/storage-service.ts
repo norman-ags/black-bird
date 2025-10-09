@@ -17,8 +17,9 @@ import { invoke } from "@tauri-apps/api/core";
  * - Secure token lifecycle management
  */
 
-/** Storage key for encrypted refresh token */
-const STORAGE_KEY = "bb_refresh_token";
+/** Storage key for encrypted refresh token - matches backend token_manager.rs keys */
+const REFRESH_TOKEN_KEY = "refresh_token";
+const STORAGE_KEY = "bb_refresh_token"; // Legacy key for localStorage fallback
 
 /**
  * Check if running in Tauri environment
@@ -114,40 +115,40 @@ export async function saveRefreshToken(token: string): Promise<void> {
 }
 
 /**
- * Load and decrypt stored refresh token
+ * Load stored refresh token using backend-compatible keys
  *
- * Retrieves the encrypted token from Tauri secure storage (if available) or
- * localStorage and decrypts it using Web Crypto API. Returns null if no token
- * exists or decryption fails.
+ * Always tries Tauri storage first since we're running in Tauri environment.
+ * Falls back to localStorage only if Tauri calls fail.
  *
- * @returns Decrypted refresh token string or null if not found/invalid
+ * @returns Refresh token string or null if not found/invalid
  */
 export async function loadRefreshToken(): Promise<string | null> {
   try {
-    let encrypted: string | null = null;
-
     console.log({ isTauriEnvironment: isTauriEnvironment() });
-    if (isTauriEnvironment()) {
-      // Use Tauri secure storage
-      encrypted = await retrieveTauriData(STORAGE_KEY);
-    } else {
-      // Fallback to localStorage for development
-      encrypted = localStorage.getItem(STORAGE_KEY);
+
+    // Always try Tauri storage first (backend storage with correct keys)
+    try {
+      const token = await retrieveTauriData(REFRESH_TOKEN_KEY);
+      console.log("Retrieved refresh token from backend storage:", token ? "found" : "not found");
+      if (token) {
+        return token;
+      }
+    } catch (tauriError) {
+      console.warn("Tauri storage failed, trying localStorage fallback:", tauriError);
     }
 
+    // Fallback to localStorage (encrypted legacy storage)
+    const encrypted = localStorage.getItem(STORAGE_KEY);
     if (!encrypted) {
+      console.log("No token found in localStorage either");
       return null;
     }
 
+    console.log("Found token in localStorage, decrypting...");
     const decrypted = await decryptString(encrypted);
     return decrypted || null;
   } catch (error) {
-    console.warn(
-      "Failed to decrypt refresh token, clearing corrupted data:",
-      error
-    );
-    // Clear corrupted token data
-    await clearRefreshToken();
+    console.warn("Failed to load refresh token:", error);
     return null;
   }
 }
