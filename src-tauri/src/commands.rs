@@ -179,8 +179,8 @@ pub async fn get_attendance_status_api(access_token: &str) -> Result<Option<Atte
     println!("[API] Attendance status API called with token: {}", access_token);
     let client = reqwest::Client::new();
 
-    // Get today's date
-    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    // Get today's date in local timezone
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
 
     let response = client
         .get(EMAPTA_ATTENDANCE_ENDPOINT)
