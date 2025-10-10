@@ -58,7 +58,7 @@ For efficient Claude Code sessions, use this context approach:
 
 https://api.platform.emapta.com/time-and-attendance/ta/v1/dtr/attendance?date_from=2025-09-26&date_to=2025-10-10
 
-This API call response is is below. And base from this information I should be already clocked in but in the UI it's saying "Not Clocked In"
+This API call response is is below.
 
 ```json {
     "timestamp": "2025-10-08T13:18:07.716Z",

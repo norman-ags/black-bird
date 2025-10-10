@@ -37,6 +37,7 @@ pub async fn get_saved_access_token(app_handle: &AppHandle) -> Result<String, Ap
 
 /// Refresh tokens using saved refresh token and overwrite storage keys
 pub async fn refresh_and_save_tokens(app_handle: &AppHandle) -> Result<TokenResponse, AppError> {
+    let start_time = std::time::Instant::now();
     let storage = create_storage_backend(app_handle.clone())?;
 
     // Get current refresh token
@@ -44,15 +45,35 @@ pub async fn refresh_and_save_tokens(app_handle: &AppHandle) -> Result<TokenResp
         .ok_or_else(|| AppError::authentication("No refresh token found".to_string()))?;
 
     // Exchange for new tokens
-    let new_tokens = exchange_refresh_token_api(&refresh_token).await
-        .map_err(|e| AppError::authentication(format!("Token refresh failed: {}", e)))?;
+    let result = exchange_refresh_token_api(&refresh_token).await;
+    let duration_ms = start_time.elapsed().as_millis() as u64;
 
-    // OVERWRITE existing keys with new tokens (fixed key strategy)
-    storage.store(REFRESH_TOKEN_KEY, &new_tokens.refresh_token).await?;
-    storage.store(ACCESS_TOKEN_KEY, &new_tokens.access_token).await?;
+    match result {
+        Ok(new_tokens) => {
+            // OVERWRITE existing keys with new tokens (fixed key strategy)
+            storage.store(REFRESH_TOKEN_KEY, &new_tokens.refresh_token).await?;
+            storage.store(ACCESS_TOKEN_KEY, &new_tokens.access_token).await?;
 
-    println!("[TokenManager] Tokens refreshed and saved successfully");
-    Ok(new_tokens)
+            println!("[TokenManager] Tokens refreshed and saved successfully");
+
+            // Log successful token refresh
+            if let Some(logger) = crate::logging::get_logger() {
+                let _ = logger.log_token_refresh(true, Some(duration_ms), None).await;
+            }
+
+            Ok(new_tokens)
+        }
+        Err(e) => {
+            let error_msg = format!("Token refresh failed: {}", e);
+
+            // Log failed token refresh
+            if let Some(logger) = crate::logging::get_logger() {
+                let _ = logger.log_token_refresh(false, Some(duration_ms), Some(&e)).await;
+            }
+
+            Err(AppError::authentication(error_msg))
+        }
+    }
 }
 
 /// Save initial tokens during setup (both refresh and access token)
@@ -131,35 +152,95 @@ where
 pub async fn attendance_check_with_shared_tokens(
     app_handle: &AppHandle,
 ) -> Result<Option<crate::commands::AttendanceItem>, AppError> {
-    api_with_shared_tokens(
+    let start_time = std::time::Instant::now();
+
+    let result = api_with_shared_tokens(
         app_handle,
         |token| async move {
             crate::commands::get_attendance_status_api(&token).await
         },
         "attendance_check",
-    ).await
+    ).await;
+
+    let duration_ms = start_time.elapsed().as_millis() as u64;
+
+    // Log attendance check
+    if let Some(logger) = crate::logging::get_logger() {
+        match &result {
+            Ok(_) => {
+                let _ = logger.log_attendance_check(true, Some(duration_ms), None).await;
+            }
+            Err(e) => {
+                let _ = logger.log_attendance_check(false, Some(duration_ms), Some(&e.to_string())).await;
+            }
+        }
+    }
+
+    result
 }
 
 /// Wrapper for clock-in API using shared token logic
 pub async fn clock_in_with_shared_tokens(app_handle: &AppHandle) -> Result<bool, AppError> {
-    api_with_shared_tokens(
+    let start_time = std::time::Instant::now();
+
+    let result = api_with_shared_tokens(
         app_handle,
         |token| async move {
             crate::commands::clock_in_api(&token).await
         },
         "clock_in",
-    ).await
+    ).await;
+
+    let duration_ms = start_time.elapsed().as_millis() as u64;
+
+    // Log clock-in operation
+    if let Some(logger) = crate::logging::get_logger() {
+        match &result {
+            Ok(true) => {
+                let _ = logger.log_clock_in(true, "shared_token_api", Some(duration_ms), None).await;
+            }
+            Ok(false) => {
+                let _ = logger.log_clock_in(false, "shared_token_api", Some(duration_ms), Some("API returned false")).await;
+            }
+            Err(e) => {
+                let _ = logger.log_clock_in(false, "shared_token_api", Some(duration_ms), Some(&e.to_string())).await;
+            }
+        }
+    }
+
+    result
 }
 
 /// Wrapper for clock-out API using shared token logic
 pub async fn clock_out_with_shared_tokens(app_handle: &AppHandle) -> Result<bool, AppError> {
-    api_with_shared_tokens(
+    let start_time = std::time::Instant::now();
+
+    let result = api_with_shared_tokens(
         app_handle,
         |token| async move {
             crate::commands::clock_out_api(&token).await
         },
         "clock_out",
-    ).await
+    ).await;
+
+    let duration_ms = start_time.elapsed().as_millis() as u64;
+
+    // Log clock-out operation
+    if let Some(logger) = crate::logging::get_logger() {
+        match &result {
+            Ok(true) => {
+                let _ = logger.log_clock_out(true, "shared_token_api", Some(duration_ms), None).await;
+            }
+            Ok(false) => {
+                let _ = logger.log_clock_out(false, "shared_token_api", Some(duration_ms), Some("API returned false")).await;
+            }
+            Err(e) => {
+                let _ = logger.log_clock_out(false, "shared_token_api", Some(duration_ms), Some(&e.to_string())).await;
+            }
+        }
+    }
+
+    result
 }
 
 #[cfg(test)]

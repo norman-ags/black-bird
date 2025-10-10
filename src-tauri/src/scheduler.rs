@@ -138,6 +138,11 @@ impl BackendScheduler {
     pub async fn check_auto_startup(&self) -> Result<bool, AppError> {
         println!("[Scheduler] Checking if auto clock-in should run...");
 
+        // Log app startup event
+        if let Some(logger) = crate::logging::get_logger() {
+            let _ = logger.log_app_startup(false, None).await; // Will update with actual result later
+        }
+
         // Check if we have tokens available (used for attendance API check)
         if let Err(e) = crate::token_manager::get_saved_access_token(&self.app_handle).await {
             println!("[Scheduler] No access token found, skipping auto clock-in: {}", e);
@@ -657,6 +662,7 @@ impl BackendScheduler {
 
         // Parse EMAPTA datetime format with improved timezone handling
         let clock_in_dt = DateTime::parse_from_rfc3339(external_clock_in)
+            .map(|dt| dt.with_timezone(&chrono::Utc))
             .or_else(|_| {
                 // Try parsing without timezone info - IMPORTANT: Assume LOCAL timezone, not UTC
                 if !external_clock_in.contains('T') {
@@ -665,10 +671,13 @@ impl BackendScheduler {
 
                     // Try parsing as local time first (more accurate for EMAPTA times)
                     if let Ok(naive_dt) = chrono::NaiveDateTime::parse_from_str(&with_t, "%Y-%m-%dT%H:%M:%S") {
-                        let local_dt = chrono::Local.from_local_datetime(&naive_dt).single()
-                            .ok_or_else(|| AppError::validation("time", "Ambiguous local time"))?;
-                        println!("[Scheduler] Parsed as local time: {} -> UTC: {}", local_dt, local_dt.with_timezone(&chrono::Utc));
-                        return Ok(local_dt.with_timezone(&chrono::Utc));
+                        if let Some(local_dt) = chrono::Local.from_local_datetime(&naive_dt).single() {
+                            let utc_dt = local_dt.with_timezone(&chrono::Utc);
+                            println!("[Scheduler] Parsed as local time: {} -> UTC: {}", local_dt, utc_dt);
+                            return Ok(utc_dt);
+                        } else {
+                            return Err(AppError::validation("time", "Ambiguous local time"));
+                        }
                     }
 
                     // Fallback: treat as UTC if local parsing fails
@@ -679,17 +688,20 @@ impl BackendScheduler {
                         format!("{}Z", with_t)
                     };
                     DateTime::parse_from_rfc3339(&with_tz)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .map_err(|e| AppError::validation("time", &format!("Invalid external clock-in time format '{}': {}", external_clock_in, e)))
                 } else {
                     DateTime::parse_from_rfc3339(external_clock_in)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .map_err(|e| AppError::validation("time", &format!("Invalid external clock-in time format '{}': {}", external_clock_in, e)))
                 }
-            })
-            .map_err(|e| AppError::validation("time", &format!("Invalid external clock-in time format '{}': {}", external_clock_in, e)))?;
+            })?;
 
         let schedule = self.schedule.lock().unwrap();
         let work_duration = if let Some(schedule) = &*schedule {
             schedule.min_work_duration_minutes as i64
         } else {
-            540 // Default 9 hours
+            550 // Default 9 hours 10 minutes
         };
 
         Ok((clock_in_dt + chrono::Duration::minutes(work_duration)).with_timezone(&chrono::Utc))

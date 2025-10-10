@@ -8,7 +8,7 @@ export interface WorkSchedule {
   timezone: string;
   /** Whether automatic scheduling is enabled */
   autoScheduleEnabled: boolean;
-  /** Minimum work duration in minutes (default: 540 = 9 hours) */
+  /** Minimum work duration in minutes (default: 550 = 9 hours 10 minutes) */
   minWorkDurationMinutes: number;
 }
 

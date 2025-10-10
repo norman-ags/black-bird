@@ -392,5 +392,5 @@ export const getDefaultSchedule = (): WorkSchedule => ({
   clockInTime: "09:00",
   timezone: "America/New_York",
   autoScheduleEnabled: false,
-  minWorkDurationMinutes: 540, // 9 hours
+  minWorkDurationMinutes: 550, // 9 hours 10 minutes
 });

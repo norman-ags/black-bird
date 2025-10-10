@@ -102,7 +102,7 @@ export const StatusScreen: React.FC = () => {
             style={{ textAlign: "left", color: "#6b7280", paddingLeft: "20px" }}
           >
             <li>Automatically clock you in when you open the app</li>
-            <li>Automatically clock you out after 9 hours</li>
+            <li>Automatically clock you out after 9 hours 10 minutes</li>
             <li>Skip weekends and holidays automatically</li>
             <li>Run in the background with minimal interaction</li>
           </ul>

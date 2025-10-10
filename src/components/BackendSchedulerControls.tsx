@@ -32,7 +32,7 @@ export default function BackendSchedulerControls() {
     clockInTime: "09:00",
     timezone: "America/New_York",
     autoScheduleEnabled: true,
-    minWorkDurationMinutes: 540, // 9 hours
+    minWorkDurationMinutes: 550, // 9 hours 10 minutes
   };
 
   /**
@@ -80,7 +80,7 @@ export default function BackendSchedulerControls() {
 
       if (!canClockOut) {
         const shouldBypass = window.confirm(
-          "You haven't reached the minimum work duration (9 hours). Clock out anyway?"
+          "You haven't reached the minimum work duration (9 hours 10 minutes). Clock out anyway?"
         );
         if (!shouldBypass) {
           setMessage("Clock out cancelled - minimum duration not reached");
@@ -210,7 +210,7 @@ export default function BackendSchedulerControls() {
           </div>
         )}
 
-        <p>Can Clock Out: {canClockOut ? "✅ Yes" : "❌ No (need 9 hours)"}</p>
+        <p>Can Clock Out: {canClockOut ? "✅ Yes" : "❌ No (need 9 hours 10 minutes)"}</p>
       </div>
 
       {/* Manual Operations */}
@@ -266,7 +266,7 @@ export default function BackendSchedulerControls() {
         </div>
 
         <p style={{ fontSize: "0.9em", color: "gray" }}>
-          Schedule: Clock in at 9:00 AM EST, work for 9 hours minimum
+          Schedule: Clock in at 9:00 AM EST, work for 9 hours 10 minutes minimum
         </p>
       </div>
 

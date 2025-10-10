@@ -11,6 +11,7 @@ mod storage;
 mod errors;
 mod scheduler;
 mod token_manager;
+mod logging;
 #[cfg(feature = "system-tray")]
 mod tray;
 
@@ -40,6 +41,10 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize scheduler
     crate::scheduler::initialize_scheduler(app_handle.clone());
     println!("Scheduler initialized successfully");
+
+    // Initialize activity logger
+    crate::logging::initialize_logger(app_handle.clone());
+    println!("Activity logger initialized successfully");
 
     // Initialize background monitoring automatically (moved from frontend)
     let monitoring_handle = app_handle.clone();
@@ -127,6 +132,11 @@ pub fn run() {
             enable_autostart,
             disable_autostart,
             is_autostart_enabled,
+
+            // Activity logging commands (Phase 4 Feature)
+            get_activity_logs,
+            get_filtered_activity_logs,
+            clear_activity_logs,
 
             // Legacy greeting command (can be removed in production)
             greet

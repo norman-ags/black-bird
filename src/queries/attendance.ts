@@ -73,7 +73,7 @@ export const getClockInTime = (
 };
 
 /**
- * Helper to calculate expected clock out time (9 hours after clock in)
+ * Helper to calculate expected clock out time (9 hours 10 minutes after clock in)
  */
 export const getExpectedClockOutTime = (
   attendance: AttendanceItem | null
@@ -82,7 +82,7 @@ export const getExpectedClockOutTime = (
   if (!clockInTime) return null;
 
   const clockInDate = new Date(clockInTime);
-  const expectedClockOut = new Date(clockInDate.getTime() + 9 * 60 * 60 * 1000);
+  const expectedClockOut = new Date(clockInDate.getTime() + 550 * 60 * 1000); // 9 hours 10 minutes
   return expectedClockOut.toISOString();
 };
 

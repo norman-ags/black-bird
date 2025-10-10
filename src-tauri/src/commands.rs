@@ -440,9 +440,14 @@ pub async fn initialize_background_monitoring(app_handle: AppHandle) -> Result<S
             if let Ok(duration_since_last) = now.duration_since(last_check) {
                 // Lower threshold for wake detection - more sensitive to shorter sleeps
                 if duration_since_last.as_secs() > 120 { // 2 minutes instead of 10
-                    println!("Detected potential system wake (gap of {} seconds), checking auto clock-in...", 
-                             duration_since_last.as_secs());
-                    
+                    let gap_seconds = duration_since_last.as_secs();
+                    println!("Detected potential system wake (gap of {} seconds), checking auto clock-in...", gap_seconds);
+
+                    // Log wake detection event
+                    if let Some(logger) = crate::logging::get_logger() {
+                        let _ = logger.log_wake_detected(gap_seconds).await;
+                    }
+
                     if let Some(scheduler) = get_scheduler() {
                         match scheduler.check_auto_startup().await {
                             Ok(clocked_in) => {
@@ -554,4 +559,58 @@ pub async fn is_autostart_enabled(app_handle: AppHandle) -> Result<bool, String>
         Ok(enabled) => Ok(enabled),
         Err(e) => Err(format!("Failed to check auto-launch status: {}", e))
     }
+}
+
+// ============================================================================
+// ACTIVITY LOGGING COMMANDS (Phase 4 Feature)
+// ============================================================================
+
+/// Get recent activity log entries
+#[tauri::command]
+pub async fn get_activity_logs(limit: Option<usize>) -> Result<Vec<crate::logging::LogEntry>, String> {
+    let logger = crate::logging::get_logger().ok_or("Activity logger not initialized")?;
+    logger.get_recent_entries(limit).await
+        .map_err(|e| format!("Failed to get activity logs: {}", e))
+}
+
+/// Get filtered activity log entries
+#[tauri::command]
+pub async fn get_filtered_activity_logs(
+    action_filter: Option<String>,
+    status_filter: Option<String>,
+    limit: Option<usize>
+) -> Result<Vec<crate::logging::LogEntry>, String> {
+    let logger = crate::logging::get_logger().ok_or("Activity logger not initialized")?;
+
+    // Parse filter strings to enums
+    let action = match action_filter.as_deref() {
+        Some("clock_in") => Some(crate::logging::LogAction::ClockIn),
+        Some("clock_out") => Some(crate::logging::LogAction::ClockOut),
+        Some("attendance_check") => Some(crate::logging::LogAction::AttendanceCheck),
+        Some("token_refresh") => Some(crate::logging::LogAction::TokenRefresh),
+        Some("wake_detected") => Some(crate::logging::LogAction::WakeDetected),
+        Some("schedule_updated") => Some(crate::logging::LogAction::ScheduleUpdated),
+        Some("app_startup") => Some(crate::logging::LogAction::AppStartup),
+        Some("error") => Some(crate::logging::LogAction::Error),
+        _ => None,
+    };
+
+    let status = match status_filter.as_deref() {
+        Some("success") => Some(crate::logging::LogStatus::Success),
+        Some("failed") => Some(crate::logging::LogStatus::Failed),
+        Some("warning") => Some(crate::logging::LogStatus::Warning),
+        Some("info") => Some(crate::logging::LogStatus::Info),
+        _ => None,
+    };
+
+    logger.get_filtered_entries(action, status, limit).await
+        .map_err(|e| format!("Failed to get filtered activity logs: {}", e))
+}
+
+/// Clear all activity logs
+#[tauri::command]
+pub async fn clear_activity_logs() -> Result<u32, String> {
+    let logger = crate::logging::get_logger().ok_or("Activity logger not initialized")?;
+    logger.clear_all_logs().await
+        .map_err(|e| format!("Failed to clear activity logs: {}", e))
 }

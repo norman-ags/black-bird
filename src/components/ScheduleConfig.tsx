@@ -43,7 +43,7 @@ const DEFAULT_SCHEDULE: WorkSchedule = {
   autoScheduleEnabled: false,
   clockInTime: "09:00",
   timezone: "America/New_York",
-  minWorkDurationMinutes: 540, // 9 hours
+  minWorkDurationMinutes: 550, // 9 hours 10 minutes
 };
 
 export const ScheduleConfig = () => {

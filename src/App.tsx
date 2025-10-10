@@ -10,7 +10,7 @@ import { useAuth } from "./hooks/use-auth";
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 1000 * 60 * 5, // 5 minutes
+      staleTime: 1000 * 60 * 1, // 1 minute
     },
   },
 });
@@ -26,7 +26,7 @@ const AppContent = () => {
   if (loading) {
     return (
       <main className="container">
-        <h1>Black Bird — Clock Automation</h1>
+        <h1>Black Bird</h1>
         <div style={{ textAlign: "center", padding: "48px 24px" }}>
           <p>Loading...</p>
         </div>
@@ -40,7 +40,7 @@ const AppContent = () => {
   if (!refreshToken || activeScreen === "setup") {
     return (
       <main className="container">
-        <h1>Black Bird — Clock Automation</h1>
+        <h1>Black Bird</h1>
         <TokenSetup onSave={() => setActiveScreen("status")} />
       </main>
     );
@@ -52,7 +52,7 @@ const AppContent = () => {
   // Ultra-simplified interface
   return (
     <main className="container">
-      <h1>Project BlackBird</h1>
+      <h1>BlackBird</h1>
 
       <StatusScreen />
 
