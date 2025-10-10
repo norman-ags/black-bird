@@ -52,7 +52,7 @@ const AppContent = () => {
   // Ultra-simplified interface
   return (
     <main className="container">
-      <h1>Black Bird — Clock Automation</h1>
+      <h1>Project BlackBird</h1>
 
       <StatusScreen />
 

@@ -392,6 +392,8 @@ pub async fn api_manual_clock_out(app_handle: AppHandle) -> Result<bool, String>
 /// Initialize background monitoring for sleep/wake detection
 #[tauri::command]
 pub async fn initialize_background_monitoring(app_handle: AppHandle) -> Result<String, String> {
+    println!("[Background] Initializing background monitoring and sleep/wake detection...");
+
     // Perform initial auto-startup check
     tokio::spawn(async move {
         // Small delay to ensure everything is initialized
@@ -427,14 +429,17 @@ pub async fn initialize_background_monitoring(app_handle: AppHandle) -> Result<S
         let mut last_check = std::time::SystemTime::now();
         
         loop {
-            // Check every 5 minutes
-            tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
-            
+            // Check more frequently for better responsiveness
+            tokio::time::sleep(tokio::time::Duration::from_secs(60)).await; // Every 1 minute instead of 5
+
             let now = std::time::SystemTime::now();
+
+            // Log that monitoring is still active (helps verify tray behavior)
+            println!("[Background] Sleep/wake monitoring active - last check was {} seconds ago",
+                     now.duration_since(last_check).unwrap_or_default().as_secs());
             if let Ok(duration_since_last) = now.duration_since(last_check) {
-                // If more than 10 minutes have passed since last check, 
-                // it might indicate the system was sleeping
-                if duration_since_last.as_secs() > 600 { // 10 minutes
+                // Lower threshold for wake detection - more sensitive to shorter sleeps
+                if duration_since_last.as_secs() > 120 { // 2 minutes instead of 10
                     println!("Detected potential system wake (gap of {} seconds), checking auto clock-in...", 
                              duration_since_last.as_secs());
                     

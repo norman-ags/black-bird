@@ -41,6 +41,15 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     crate::scheduler::initialize_scheduler(app_handle.clone());
     println!("Scheduler initialized successfully");
 
+    // Initialize background monitoring automatically (moved from frontend)
+    let monitoring_handle = app_handle.clone();
+    tokio::spawn(async move {
+        match crate::commands::initialize_background_monitoring(monitoring_handle).await {
+            Ok(msg) => println!("Background monitoring auto-initialized: {}", msg),
+            Err(e) => println!("Background monitoring auto-initialization failed: {}", e),
+        }
+    });
+
     // Initialize system tray (only on supported platforms)
     #[cfg(feature = "system-tray")]
     {

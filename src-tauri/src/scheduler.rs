@@ -559,8 +559,20 @@ impl BackendScheduler {
         let schedule_ref = Arc::clone(&self.schedule);
         let operation_id_clone = operation_id.clone();
         
-        let delay = (clock_out_dt.timestamp() - chrono::Utc::now().timestamp()) as u64;
-        let delay_duration = Duration::from_secs(delay.max(1)); // Minimum 1 second delay
+        let now = chrono::Utc::now();
+        let delay_seconds = clock_out_dt.timestamp() - now.timestamp();
+
+        // Handle negative delays (past due times) and very long delays
+        let delay_duration = if delay_seconds <= 0 {
+            println!("[Scheduler] Clock-out time is in the past or now ({}), executing immediately", clock_out_dt.to_rfc3339());
+            Duration::from_secs(1) // Execute almost immediately
+        } else if delay_seconds > 86400 { // More than 24 hours
+            println!("[Scheduler] WARNING: Clock-out delay is very long ({} seconds = {} hours), capping to 12 hours", delay_seconds, delay_seconds / 3600);
+            Duration::from_secs(43200) // Cap at 12 hours
+        } else {
+            println!("[Scheduler] Clock-out scheduled in {} seconds ({:.1} hours)", delay_seconds, delay_seconds as f32 / 3600.0);
+            Duration::from_secs(delay_seconds as u64)
+        };
         
         let task = tokio::spawn(async move {
             sleep(delay_duration).await;
@@ -641,16 +653,29 @@ impl BackendScheduler {
 
     /// Calculate expected clock-out time from external clock-in (EMAPTA date format)
     fn calculate_clock_out_from_external(&self, external_clock_in: &str) -> Result<DateTime<chrono::Utc>, AppError> {
-        // Parse EMAPTA datetime format (assuming ISO 8601 or similar)
+        println!("[Scheduler] Parsing external clock-in time: '{}'", external_clock_in);
+
+        // Parse EMAPTA datetime format with improved timezone handling
         let clock_in_dt = DateTime::parse_from_rfc3339(external_clock_in)
             .or_else(|_| {
-                // Try parsing without timezone info (add UTC if missing)
+                // Try parsing without timezone info - IMPORTANT: Assume LOCAL timezone, not UTC
                 if !external_clock_in.contains('T') {
-                    // Format: "2024-10-09 09:00:00" -> "2024-10-09T09:00:00Z"
+                    // Format: "2024-10-09 09:00:00" -> parse as local time
                     let with_t = external_clock_in.replace(' ', "T");
+
+                    // Try parsing as local time first (more accurate for EMAPTA times)
+                    if let Ok(naive_dt) = chrono::NaiveDateTime::parse_from_str(&with_t, "%Y-%m-%dT%H:%M:%S") {
+                        let local_dt = chrono::Local.from_local_datetime(&naive_dt).single()
+                            .ok_or_else(|| AppError::validation("time", "Ambiguous local time"))?;
+                        println!("[Scheduler] Parsed as local time: {} -> UTC: {}", local_dt, local_dt.with_timezone(&chrono::Utc));
+                        return Ok(local_dt.with_timezone(&chrono::Utc));
+                    }
+
+                    // Fallback: treat as UTC if local parsing fails
                     let with_tz = if with_t.ends_with('Z') || with_t.contains('+') || with_t.contains('-') {
                         with_t
                     } else {
+                        println!("[Scheduler] WARNING: Falling back to UTC interpretation for time: {}", external_clock_in);
                         format!("{}Z", with_t)
                     };
                     DateTime::parse_from_rfc3339(&with_tz)
@@ -658,7 +683,7 @@ impl BackendScheduler {
                     DateTime::parse_from_rfc3339(external_clock_in)
                 }
             })
-            .map_err(|_| AppError::validation("time", "Invalid external clock-in time format"))?;
+            .map_err(|e| AppError::validation("time", &format!("Invalid external clock-in time format '{}': {}", external_clock_in, e)))?;
 
         let schedule = self.schedule.lock().unwrap();
         let work_duration = if let Some(schedule) = &*schedule {
@@ -700,8 +725,20 @@ impl BackendScheduler {
         let schedule_ref = Arc::clone(&self.schedule);
         let operation_id_clone = operation_id.clone();
 
-        let delay = (expected_clock_out.timestamp() - chrono::Utc::now().timestamp()) as u64;
-        let delay_duration = Duration::from_secs(delay.max(1)); // Minimum 1 second delay
+        let now = chrono::Utc::now();
+        let delay_seconds = expected_clock_out.timestamp() - now.timestamp();
+
+        // Handle negative delays (past due times) and very long delays
+        let delay_duration = if delay_seconds <= 0 {
+            println!("[Scheduler] External clock-out time is in the past or now ({}), executing immediately", expected_clock_out.to_rfc3339());
+            Duration::from_secs(1) // Execute almost immediately
+        } else if delay_seconds > 86400 { // More than 24 hours
+            println!("[Scheduler] WARNING: External clock-out delay is very long ({} seconds = {} hours), capping to 12 hours", delay_seconds, delay_seconds / 3600);
+            Duration::from_secs(43200) // Cap at 12 hours
+        } else {
+            println!("[Scheduler] External clock-out scheduled in {} seconds ({:.1} hours)", delay_seconds, delay_seconds as f32 / 3600.0);
+            Duration::from_secs(delay_seconds as u64)
+        };
 
         let task = tokio::spawn(async move {
             sleep(delay_duration).await;
