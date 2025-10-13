@@ -46,14 +46,9 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     crate::logging::initialize_logger(app_handle.clone());
     println!("Activity logger initialized successfully");
 
-    // Initialize background monitoring automatically (moved from frontend)
-    let monitoring_handle = app_handle.clone();
-    tokio::spawn(async move {
-        match crate::commands::initialize_background_monitoring(monitoring_handle).await {
-            Ok(msg) => println!("Background monitoring auto-initialized: {}", msg),
-            Err(e) => println!("Background monitoring auto-initialization failed: {}", e),
-        }
-    });
+    // Note: Background monitoring will be initialized automatically when the first
+    // frontend component calls initialize_background_monitoring or when the scheduler
+    // starts. This avoids the Tokio runtime issue during synchronous setup.
 
     // Initialize system tray (only on supported platforms)
     #[cfg(feature = "system-tray")]

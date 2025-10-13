@@ -30,7 +30,11 @@ rand = "0.8"
 reqwest = { version = "0.12", features = ["json"] }
 
 [features]
-# System tray support - enable for Windows builds
-default = ["system-tray"]
+# System tray support - platform conditional
+default = []
+# Enable system tray when explicitly requested or on supported platforms
 system-tray = ["tauri/tray-icon"]
+# Platform-specific defaults - Windows gets tray, Linux optional
+windows-default = ["system-tray"]
+linux-fallback = []
 
