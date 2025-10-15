@@ -42,13 +42,40 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     crate::scheduler::initialize_scheduler(app_handle.clone());
     println!("Scheduler initialized successfully");
 
+    // Schedule automatic startup check and background monitoring initialization
+    // This runs after Tauri async runtime is available
+    let startup_handle = app_handle.clone();
+    std::thread::spawn(move || {
+        // Use std::thread to avoid Tokio runtime issues during setup
+        // This will spawn a background thread that waits for Tauri to be ready
+        std::thread::sleep(std::time::Duration::from_millis(3000));
+
+        // Create a new Tokio runtime for this thread
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                println!("[Startup] Failed to create Tokio runtime for background initialization: {}", e);
+                return;
+            }
+        };
+
+        rt.block_on(async {
+            println!("[Startup] Running automatic startup checks...");
+
+            // Initialize background monitoring first
+            match crate::commands::initialize_background_monitoring_internal(startup_handle.clone()).await {
+                Ok(_) => println!("[Startup] Background monitoring initialized successfully"),
+                Err(e) => println!("[Startup] WARNING: Background monitoring failed to initialize: {}", e),
+            }
+        });
+    });
+
     // Initialize activity logger
     crate::logging::initialize_logger(app_handle.clone());
     println!("Activity logger initialized successfully");
 
-    // Note: Background monitoring will be initialized automatically when the first
-    // frontend component calls initialize_background_monitoring or when the scheduler
-    // starts. This avoids the Tokio runtime issue during synchronous setup.
+    // Note: Background monitoring will be initialized automatically after Tauri starts
+    // This avoids the Tokio runtime issue during synchronous setup.
 
     // Initialize system tray (only on supported platforms)
     #[cfg(feature = "system-tray")]

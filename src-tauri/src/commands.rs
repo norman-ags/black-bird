@@ -389,9 +389,19 @@ pub async fn api_manual_clock_out(app_handle: AppHandle) -> Result<bool, String>
         .map_err(|e| format!("Manual clock-out failed: {}", e))
 }
 
+/// Internal function for background monitoring initialization (used during startup)
+pub async fn initialize_background_monitoring_internal(app_handle: AppHandle) -> Result<String, String> {
+    initialize_background_monitoring_impl(app_handle).await
+}
+
 /// Initialize background monitoring for sleep/wake detection
 #[tauri::command]
 pub async fn initialize_background_monitoring(app_handle: AppHandle) -> Result<String, String> {
+    initialize_background_monitoring_impl(app_handle).await
+}
+
+/// Shared implementation for background monitoring initialization
+async fn initialize_background_monitoring_impl(app_handle: AppHandle) -> Result<String, String> {
     println!("[Background] Initializing background monitoring and sleep/wake detection...");
 
     // Perform initial auto-startup check
@@ -430,16 +440,28 @@ pub async fn initialize_background_monitoring(app_handle: AppHandle) -> Result<S
         
         loop {
             // Check more frequently for better responsiveness
-            tokio::time::sleep(tokio::time::Duration::from_secs(60)).await; // Every 1 minute instead of 5
+            tokio::time::sleep(tokio::time::Duration::from_secs(60)).await; // Every 1 minute
 
             let now = std::time::SystemTime::now();
 
             // Log that monitoring is still active (helps verify tray behavior)
-            println!("[Background] Sleep/wake monitoring active - last check was {} seconds ago",
-                     now.duration_since(last_check).unwrap_or_default().as_secs());
+            let seconds_since_last = now.duration_since(last_check).unwrap_or_default().as_secs();
+            if seconds_since_last <= 90 {
+                // Normal operation - log less frequently to avoid spam
+                if seconds_since_last % 300 == 0 { // Every 5 minutes during normal operation
+                    println!("[Background] Sleep/wake monitoring active - running normally");
+                }
+            }
+
             if let Ok(duration_since_last) = now.duration_since(last_check) {
-                // Lower threshold for wake detection - more sensitive to shorter sleeps
-                if duration_since_last.as_secs() > 120 { // 2 minutes instead of 10
+                // Detect system sleep/wake cycles with adaptive threshold
+                let gap_threshold = if duration_since_last.as_secs() > 300 {
+                    120 // 2 minutes for longer gaps (likely sleep)
+                } else {
+                    150 // 2.5 minutes for shorter interruptions
+                };
+
+                if duration_since_last.as_secs() > gap_threshold {
                     let gap_seconds = duration_since_last.as_secs();
                     println!("Detected potential system wake (gap of {} seconds), checking auto clock-in...", gap_seconds);
 
