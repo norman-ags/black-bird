@@ -11,6 +11,7 @@ import {
   getCompletedShiftDetails,
 } from "../queries/attendance";
 import { invoke } from "@tauri-apps/api/core";
+import { ClockoutCountdown } from "./ClockoutCountdown";
 
 /**
  * Simplified Status Component
@@ -33,45 +34,47 @@ export const StatusScreen: React.FC = () => {
     attendanceData ?? null
   );
   const shiftCompleted = hasCompletedShift(attendanceData ?? null);
-  const completedShiftDetails = getCompletedShiftDetails(attendanceData ?? null);
+  const completedShiftDetails = getCompletedShiftDetails(
+    attendanceData ?? null
+  );
 
   const hasInitializedMonitoring = useRef(false);
 
   // Initialize background monitoring when app starts
   // The AI keep insisting to run call this in the FE and keeps failing when he tried to run on BE
   // Ideally this should be running in the BE
-  useEffect(() => {
-    // Only run once when component mounts
-    if (hasInitializedMonitoring.current) return;
+  // useEffect(() => {
+  //   // Only run once when component mounts
+  //   if (hasInitializedMonitoring.current) return;
 
-    // Only run if authenticated
-    if (!refreshToken) return;
+  //   // Only run if authenticated
+  //   if (!refreshToken) return;
 
-    // Don't run if already loading
-    if (isLoading) return;
+  //   // Don't run if already loading
+  //   if (isLoading) return;
 
-    const initializeMonitoring = async () => {
-      hasInitializedMonitoring.current = true;
+  //   const initializeMonitoring = async () => {
+  //     hasInitializedMonitoring.current = true;
 
-      try {
-        console.log("[StatusScreen] Initializing background monitoring...");
-        await invoke<string>("initialize_background_monitoring");
-        console.log(
-          "[StatusScreen] Background monitoring initialized successfully"
-        );
-      } catch (error) {
-        console.error(
-          "[StatusScreen] Failed to initialize background monitoring:",
-          error
-        );
-      }
-    };
+  //     try {
+  //       console.log("[StatusScreen] Initializing background monitoring...");
+  //       await invoke<string>("initialize_background_monitoring");
+  //       console.log(
+  //         "[StatusScreen] Background monitoring initialized successfully"
+  //       );
+  //     } catch (error) {
+  //       console.error(
+  //         "[StatusScreen] Failed to initialize background monitoring:",
+  //         error
+  //       );
+  //     }
+  //   };
 
-    // Run with a small delay to ensure everything is initialized
-    const timeout = setTimeout(initializeMonitoring, 1000);
+  //   // Run with a small delay to ensure everything is initialized
+  //   const timeout = setTimeout(initializeMonitoring, 1000);
 
-    return () => clearTimeout(timeout);
-  }, [refreshToken, isLoading]);
+  //   return () => clearTimeout(timeout);
+  // }, [refreshToken, isLoading]);
 
   // If not authenticated, show setup prompt
   if (!refreshToken) {
@@ -171,17 +174,10 @@ export const StatusScreen: React.FC = () => {
                 {new Date(expectedClockOutTime).toLocaleTimeString()}
               </div>
             )}
-            {timeRemaining && (
-              <div
-                style={{
-                  fontSize: "16px",
-                  color: "#3b82f6",
-                  fontWeight: "500",
-                }}
-              >
-                {timeRemaining}
-              </div>
-            )}
+            <ClockoutCountdown
+              expectedClockOutTime={expectedClockOutTime}
+              isCurrentlyClockedIn={isCurrentlyClockedIn}
+            />
           </div>
         )}
 
@@ -205,10 +201,14 @@ export const StatusScreen: React.FC = () => {
               Work day completed successfully!
             </div>
             <div style={{ color: "#6b7280", marginBottom: "4px" }}>
-              Clocked in: {new Date(completedShiftDetails.clockInTime).toLocaleTimeString()}
+              Clocked in:{" "}
+              {new Date(completedShiftDetails.clockInTime).toLocaleTimeString()}
             </div>
             <div style={{ color: "#6b7280" }}>
-              Clocked out: {new Date(completedShiftDetails.clockOutTime).toLocaleTimeString()}
+              Clocked out:{" "}
+              {new Date(
+                completedShiftDetails.clockOutTime
+              ).toLocaleTimeString()}
             </div>
           </div>
         )}
@@ -271,11 +271,15 @@ export const StatusScreen: React.FC = () => {
             disabled={isLoading || isCurrentlyClockedIn || shiftCompleted}
             style={{
               padding: "10px 20px",
-              backgroundColor: (isCurrentlyClockedIn || shiftCompleted) ? "#d1d5db" : "#10b981",
+              backgroundColor:
+                isCurrentlyClockedIn || shiftCompleted ? "#d1d5db" : "#10b981",
               color: "white",
               border: "none",
               borderRadius: "6px",
-              cursor: (isCurrentlyClockedIn || shiftCompleted) ? "not-allowed" : "pointer",
+              cursor:
+                isCurrentlyClockedIn || shiftCompleted
+                  ? "not-allowed"
+                  : "pointer",
               fontSize: "14px",
               fontWeight: "500",
             }}
@@ -289,11 +293,15 @@ export const StatusScreen: React.FC = () => {
             disabled={isLoading || !isCurrentlyClockedIn || shiftCompleted}
             style={{
               padding: "10px 20px",
-              backgroundColor: (!isCurrentlyClockedIn || shiftCompleted) ? "#d1d5db" : "#ef4444",
+              backgroundColor:
+                !isCurrentlyClockedIn || shiftCompleted ? "#d1d5db" : "#ef4444",
               color: "white",
               border: "none",
               borderRadius: "6px",
-              cursor: (!isCurrentlyClockedIn || shiftCompleted) ? "not-allowed" : "pointer",
+              cursor:
+                !isCurrentlyClockedIn || shiftCompleted
+                  ? "not-allowed"
+                  : "pointer",
               fontSize: "14px",
               fontWeight: "500",
             }}

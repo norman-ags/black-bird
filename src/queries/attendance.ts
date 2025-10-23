@@ -16,7 +16,17 @@ export const ATTENDANCE_QUERY_KEY = "attendance-status";
  * Fetch current attendance status from EMAPTA API
  */
 const fetchAttendanceStatus = async (): Promise<AttendanceItem | null> => {
-  return await invoke<AttendanceItem | null>("api_get_attendance_status");
+  return {
+    work_date: "2024-10-01",
+    attendance_status: "Started",
+    // time should be 2pm in Philippines timezone (UTC+8)
+    // October 15 2025, 2pm UTC+8 is October 15 2024, 6am UTC
+    date_time_in: "2025-10-15T06:00:00Z",
+    date_time_out: null,
+    is_restday: false,
+  };
+
+  // return await invoke<AttendanceItem | null>("api_get_attendance_status");
 };
 
 /**
@@ -101,6 +111,6 @@ export const getCompletedShiftDetails = (
 
   return {
     clockInTime,
-    clockOutTime
+    clockOutTime,
   };
 };

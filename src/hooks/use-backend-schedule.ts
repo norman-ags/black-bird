@@ -67,70 +67,70 @@ export const useBackendSchedule = (): UseBackendScheduleReturn => {
   /**
    * Initialize backend scheduler service
    */
-  useEffect(() => {
-    try {
-      serviceRef.current = getBackendSchedulerService();
+  // useEffect(() => {
+  //   try {
+  //     serviceRef.current = getBackendSchedulerService();
 
-      // Set up event listener for scheduler events
-      const eventListener = (event: SchedulerEvent) => {
-        console.log("[useBackendSchedule] Received event:", event);
+  //     // Set up event listener for scheduler events
+  //     const eventListener = (event: SchedulerEvent) => {
+  //       console.log("[useBackendSchedule] Received event:", event);
 
-        if (event.started) {
-          setSchedule(event.started.schedule);
-          refreshSchedulerState();
-        } else if (event.stopped) {
-          refreshSchedulerState();
-        } else if (event.clock_in_succeeded || event.clock_out_succeeded) {
-          refreshSchedulerState();
-          refreshCanClockOut();
-        } else if (event.clock_in_failed || event.clock_out_failed) {
-          const errorMsg =
-            event.clock_in_failed?.error ||
-            event.clock_out_failed?.error ||
-            "Unknown error";
-          setError(errorMsg);
-          refreshSchedulerState();
-        } else if (event.error) {
-          setError(event.error.message);
-        }
-      };
+  //       if (event.started) {
+  //         setSchedule(event.started.schedule);
+  //         refreshSchedulerState();
+  //       } else if (event.stopped) {
+  //         refreshSchedulerState();
+  //       } else if (event.clock_in_succeeded || event.clock_out_succeeded) {
+  //         refreshSchedulerState();
+  //         refreshCanClockOut();
+  //       } else if (event.clock_in_failed || event.clock_out_failed) {
+  //         const errorMsg =
+  //           event.clock_in_failed?.error ||
+  //           event.clock_out_failed?.error ||
+  //           "Unknown error";
+  //         setError(errorMsg);
+  //         refreshSchedulerState();
+  //       } else if (event.error) {
+  //         setError(event.error.message);
+  //       }
+  //     };
 
-      serviceRef.current.addEventListener("useBackendSchedule", eventListener);
+  //     serviceRef.current.addEventListener("useBackendSchedule", eventListener);
 
-      // Initial state load
-      refreshSchedulerState();
-      refreshCanClockOut();
+  //     // Initial state load
+  //     refreshSchedulerState();
+  //     refreshCanClockOut();
 
-      return () => {
-        if (serviceRef.current) {
-          serviceRef.current.removeEventListener("useBackendSchedule");
-        }
-      };
-    } catch (err) {
-      console.error("Failed to initialize backend scheduler service:", err);
-      setError(
-        err instanceof Error ? err.message : "Failed to initialize scheduler"
-      );
-    }
-  }, []);
+  //     return () => {
+  //       if (serviceRef.current) {
+  //         serviceRef.current.removeEventListener("useBackendSchedule");
+  //       }
+  //     };
+  //   } catch (err) {
+  //     console.error("Failed to initialize backend scheduler service:", err);
+  //     setError(
+  //       err instanceof Error ? err.message : "Failed to initialize scheduler"
+  //     );
+  //   }
+  // }, []);
 
   /**
    * Update access token when it changes
    */
-  useEffect(() => {
-    if (!serviceRef.current || !accessToken) return;
+  // useEffect(() => {
+  //   if (!serviceRef.current || !accessToken) return;
 
-    const updateToken = async () => {
-      try {
-        await serviceRef.current!.setAccessToken(accessToken);
-      } catch (err) {
-        console.error("Failed to set access token:", err);
-        setError("Failed to set access token");
-      }
-    };
+  //   const updateToken = async () => {
+  //     try {
+  //       await serviceRef.current!.setAccessToken(accessToken);
+  //     } catch (err) {
+  //       console.error("Failed to set access token:", err);
+  //       setError("Failed to set access token");
+  //     }
+  //   };
 
-    updateToken();
-  }, [accessToken]);
+  //   updateToken();
+  // }, [accessToken]);
 
   /**
    * Refresh scheduler state from backend
@@ -339,22 +339,22 @@ export const useBackendSchedule = (): UseBackendScheduleReturn => {
   /**
    * Sync with real attendance status when accessToken changes
    */
-  useEffect(() => {
-    if (!accessToken) return;
+  // useEffect(() => {
+  //   if (!accessToken) return;
 
-    const syncAttendance = async () => {
-      try {
-        // Small delay to ensure everything is initialized
-        setTimeout(async () => {
-          await syncWithRealAttendance();
-        }, 1500);
-      } catch (err) {
-        console.error("Failed to sync attendance on load:", err);
-      }
-    };
+  //   const syncAttendance = async () => {
+  //     try {
+  //       // Small delay to ensure everything is initialized
+  //       setTimeout(async () => {
+  //         await syncWithRealAttendance();
+  //       }, 1500);
+  //     } catch (err) {
+  //       console.error("Failed to sync attendance on load:", err);
+  //     }
+  //   };
 
-    syncAttendance();
-  }, [accessToken, syncWithRealAttendance]);
+  //   syncAttendance();
+  // }, [accessToken, syncWithRealAttendance]);
 
   // Derived state
   const isSchedulerRunning = schedulerState?.isRunning ?? false;
