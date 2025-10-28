@@ -2,7 +2,7 @@ use crate::errors::AppError;
 use crate::storage::create_storage_backend;
 use crate::scheduler::{get_scheduler, WorkSchedule as SchedulerWorkSchedule, SchedulerState};
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use reqwest;
 use chrono;
 
@@ -404,34 +404,65 @@ pub async fn initialize_background_monitoring(app_handle: AppHandle) -> Result<S
 async fn initialize_background_monitoring_impl(app_handle: AppHandle) -> Result<String, String> {
     println!("[Background] Initializing background monitoring and sleep/wake detection...");
 
+    // Clone app_handle for use in the spawned task
+    let app_handle_clone = app_handle.clone();
+
     // Perform initial auto-startup check
     tokio::spawn(async move {
-        // Small delay to ensure everything is initialized
-        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-        
+        // Wait for scheduler to be initialized with retries
+        let mut retry_count = 0;
+        let max_retries = 10; // Up to 5 seconds with 500ms intervals
+
+        while retry_count < max_retries {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+            if get_scheduler().is_some() {
+                println!("[Background] Scheduler initialized, proceeding with auto-startup check");
+                break;
+            }
+
+            retry_count += 1;
+            println!("[Background] Waiting for scheduler initialization... ({}/{})", retry_count, max_retries);
+        }
+
+        if retry_count >= max_retries {
+            println!("[Background] WARNING: Scheduler not initialized after {} attempts, proceeding anyway", max_retries);
+        }
+
         println!("Running initial auto-startup check...");
         
-        // Get the scheduler instance
-        if let Some(scheduler) = get_scheduler() {
-            // Try to load access token from storage first
-            // Check if we have tokens in storage and run auto-startup check
-            // Scheduler will get tokens from storage using storage-first pattern
+        // Check if we have valid tokens before attempting auto-startup
+        match crate::token_manager::get_saved_access_token(&app_handle_clone).await {
+            Ok(_) => {
+                println!("[Background] Access token found, proceeding with auto-startup check");
 
-            // Run initial auto-startup check
-            match scheduler.check_auto_startup().await {
-                Ok(clocked_in) => {
-                    if clocked_in {
-                        println!("Initial auto clock-in completed successfully");
-                    } else {
-                        println!("Initial auto clock-in skipped (already clocked in or conditions not met)");
+                // Get the scheduler instance
+                if let Some(scheduler) = get_scheduler() {
+                    // Run initial auto-startup check
+                    match scheduler.check_auto_startup().await {
+                        Ok(clocked_in) => {
+                            if clocked_in {
+                                println!("Initial auto clock-in completed successfully");
+                            } else {
+                                println!("Initial auto clock-in skipped (already clocked in or conditions not met)");
+                            }
+                        }
+                        Err(e) => {
+                            println!("Initial auto clock-in failed: {:?}", e);
+
+                            // Log the error for debugging
+                            if let Some(logger) = crate::logging::get_logger() {
+                                let _ = logger.log_clock_in(false, "startup_auto", None, Some(&format!("Auto clock-in startup failed: {}", e))).await;
+                            }
+                        }
                     }
-                }
-                Err(e) => {
-                    println!("Initial auto clock-in failed: {:?}", e);
+                } else {
+                    println!("Error: Could not get scheduler instance for auto-startup check");
                 }
             }
-        } else {
-            println!("Error: Could not get scheduler instance for auto-startup check");
+            Err(e) => {
+                println!("[Background] No access token found, skipping auto-startup: {}", e);
+            }
         }
         
         // Set up gap detection for sleep/wake monitoring
@@ -470,16 +501,38 @@ async fn initialize_background_monitoring_impl(app_handle: AppHandle) -> Result<
                         let _ = logger.log_wake_detected(gap_seconds).await;
                     }
 
-                    if let Some(scheduler) = get_scheduler() {
-                        match scheduler.check_auto_startup().await {
-                            Ok(clocked_in) => {
-                                if clocked_in {
-                                    println!("Post-wake auto clock-in completed successfully");
+                    // Check if we still have valid tokens before attempting wake clock-in
+                    match crate::token_manager::get_saved_access_token(&app_handle_clone).await {
+                        Ok(_) => {
+                            if let Some(scheduler) = get_scheduler() {
+                                match scheduler.check_auto_startup().await {
+                                    Ok(clocked_in) => {
+                                        if clocked_in {
+                                            println!("Post-wake auto clock-in completed successfully");
+
+                                            // Log successful wake clock-in
+                                            if let Some(logger) = crate::logging::get_logger() {
+                                                let _ = logger.log_clock_in(true, "wake_auto", None, None).await;
+                                            }
+                                        } else {
+                                            println!("Post-wake auto clock-in skipped (conditions not met)");
+                                        }
+                                    }
+                                    Err(e) => {
+                                        println!("Post-wake auto clock-in check failed: {:?}", e);
+
+                                        // Log the error
+                                        if let Some(logger) = crate::logging::get_logger() {
+                                            let _ = logger.log_clock_in(false, "wake_auto", None, Some(&format!("Post-wake auto clock-in failed: {}", e))).await;
+                                        }
+                                    }
                                 }
+                            } else {
+                                println!("Error: Could not get scheduler instance for post-wake check");
                             }
-                            Err(e) => {
-                                println!("Post-wake auto clock-in check failed: {:?}", e);
-                            }
+                        }
+                        Err(e) => {
+                            println!("[Background] No access token found for post-wake clock-in: {}", e);
                         }
                     }
                 }
@@ -635,4 +688,130 @@ pub async fn clear_activity_logs() -> Result<u32, String> {
     let logger = crate::logging::get_logger().ok_or("Activity logger not initialized")?;
     logger.clear_all_logs().await
         .map_err(|e| format!("Failed to clear activity logs: {}", e))
+}
+
+/// Force re-initialize the logging system (for debugging Windows issues)
+#[tauri::command]
+pub async fn reinitialize_logger(app_handle: tauri::AppHandle) -> Result<String, String> {
+    println!("[DEBUG] Force re-initializing logger...");
+
+    // Force re-initialization
+    crate::logging::force_reinitialize_logger(app_handle.clone());
+
+    // Check if it worked
+    if crate::logging::get_logger().is_some() {
+        println!("[DEBUG] Logger re-initialized successfully");
+
+        // Try to create a test log entry
+        if let Some(logger) = crate::logging::get_logger() {
+            match logger.log(
+                crate::logging::LogAction::Error,
+                crate::logging::LogStatus::Info,
+                "Logger re-initialization test".to_string(),
+                crate::logging::LogMetadata {
+                    duration: None,
+                    trigger_type: Some("reinit_test".to_string()),
+                    api_endpoint: None,
+                    error_code: None,
+                }
+            ).await {
+                Ok(_) => Ok("Logger re-initialized and test log created successfully".to_string()),
+                Err(e) => Ok(format!("Logger re-initialized but test log failed: {}", e)),
+            }
+        } else {
+            Ok("Logger re-initialized but not accessible".to_string())
+        }
+    } else {
+        Err("Failed to re-initialize logger".to_string())
+    }
+}
+
+/// Debug command to check logging system status
+#[tauri::command]
+pub async fn debug_logging_status(app_handle: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    use serde_json::json;
+    use std::fs;
+
+    // Check if logger is initialized
+    let logger_initialized = crate::logging::get_logger().is_some();
+
+    // Get app data directory
+    let app_data_dir = app_handle.path().app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+    // Check if directory exists
+    let dir_exists = app_data_dir.exists();
+
+    // List files in app data directory
+    let mut files = Vec::new();
+    let mut log_files = Vec::new();
+
+    if dir_exists {
+        match fs::read_dir(&app_data_dir) {
+            Ok(entries) => {
+                for entry in entries {
+                    if let Ok(entry) = entry {
+                        let file_name = entry.file_name().to_string_lossy().to_string();
+                        files.push(file_name.clone());
+                        if file_name.starts_with("logs_") {
+                            log_files.push(file_name);
+                        }
+                    }
+                }
+            },
+            Err(e) => return Err(format!("Failed to read app data directory: {}", e)),
+        }
+    }
+
+    // Try to get storage backend and list keys
+    let storage_keys = match crate::storage::create_storage_backend(app_handle.clone()) {
+        Ok(storage) => {
+            match storage.list_keys().await {
+                Ok(keys) => Some(keys),
+                Err(e) => {
+                    println!("[DEBUG] Failed to list storage keys: {}", e);
+                    None
+                }
+            }
+        },
+        Err(e) => {
+            println!("[DEBUG] Failed to create storage backend: {}", e);
+            None
+        }
+    };
+
+    // Try to test a simple log entry
+    let test_log_result = if logger_initialized {
+        if let Some(logger) = crate::logging::get_logger() {
+            match logger.log(
+                crate::logging::LogAction::Error,
+                crate::logging::LogStatus::Info,
+                "Debug test log entry".to_string(),
+                crate::logging::LogMetadata {
+                    duration: None,
+                    trigger_type: Some("debug_test".to_string()),
+                    api_endpoint: None,
+                    error_code: None,
+                }
+            ).await {
+                Ok(_) => Some("success".to_string()),
+                Err(e) => Some(format!("failed: {}", e)),
+            }
+        } else {
+            Some("logger_not_available".to_string())
+        }
+    } else {
+        Some("logger_not_initialized".to_string())
+    };
+
+    Ok(json!({
+        "logger_initialized": logger_initialized,
+        "app_data_dir": app_data_dir.to_string_lossy(),
+        "dir_exists": dir_exists,
+        "all_files": files,
+        "log_files": log_files,
+        "storage_keys": storage_keys,
+        "test_log_result": test_log_result,
+        "platform": std::env::consts::OS
+    }))
 }

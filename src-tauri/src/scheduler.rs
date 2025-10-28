@@ -189,6 +189,22 @@ impl BackendScheduler {
                 // Check if it's a rest day
                 if attendance.is_restday == Some(true) {
                     println!("[Scheduler] Today is a rest day, skipping auto clock-in");
+
+                    // Log the skip reason to activity logs
+                    if let Some(logger) = crate::logging::get_logger() {
+                        let _ = logger.log(
+                            crate::logging::LogAction::AppStartup,
+                            crate::logging::LogStatus::Info,
+                            "Auto clock-in skipped: Today is a rest day".to_string(),
+                            crate::logging::LogMetadata {
+                                duration: None,
+                                trigger_type: Some("app_startup".to_string()),
+                                api_endpoint: None,
+                                error_code: None,
+                            }
+                        ).await;
+                    }
+
                     return Ok(false);
                 }
 
@@ -231,17 +247,80 @@ impl BackendScheduler {
                                 // Not overdue yet - schedule missing clock-out
                                 if !self.has_pending_clock_out() {
                                     println!("[Scheduler] Scheduling missing clock-out for external clock-in");
+                                    println!("[Scheduler] Expected clock-out time: {}", expected_clock_out.to_rfc3339());
+
+                                    // Log to activity logs
+                                    if let Some(logger) = crate::logging::get_logger() {
+                                        let _ = logger.log(
+                                            crate::logging::LogAction::AppStartup,
+                                            crate::logging::LogStatus::Info,
+                                            format!("Scheduling automatic clock-out for {}", expected_clock_out.format("%I:%M %p")),
+                                            crate::logging::LogMetadata {
+                                                duration: None,
+                                                trigger_type: Some("external_clock_in".to_string()),
+                                                api_endpoint: None,
+                                                error_code: None,
+                                            }
+                                        ).await;
+                                    }
+
                                     match self.schedule_clock_out_from_external(external_clock_in, expected_clock_out).await {
                                         Ok(_) => {
                                             println!("[Scheduler] Missing clock-out scheduled successfully");
                                         }
                                         Err(e) => {
                                             println!("[Scheduler] Failed to schedule missing clock-out: {:?}", e);
+
+                                            // Log scheduling failure
+                                            if let Some(logger) = crate::logging::get_logger() {
+                                                let _ = logger.log(
+                                                    crate::logging::LogAction::AppStartup,
+                                                    crate::logging::LogStatus::Failed,
+                                                    format!("Failed to schedule automatic clock-out: {}", e),
+                                                    crate::logging::LogMetadata {
+                                                        duration: None,
+                                                        trigger_type: Some("external_clock_in".to_string()),
+                                                        api_endpoint: None,
+                                                        error_code: Some("clock_out_schedule_failed".to_string()),
+                                                    }
+                                                ).await;
+                                            }
                                         }
                                     }
                                 } else {
                                     println!("[Scheduler] Clock-out already scheduled");
+
+                                    // Log that clock-out is already scheduled
+                                    if let Some(logger) = crate::logging::get_logger() {
+                                        let _ = logger.log(
+                                            crate::logging::LogAction::AppStartup,
+                                            crate::logging::LogStatus::Info,
+                                            "Automatic clock-out already scheduled".to_string(),
+                                            crate::logging::LogMetadata {
+                                                duration: None,
+                                                trigger_type: Some("external_clock_in".to_string()),
+                                                api_endpoint: None,
+                                                error_code: None,
+                                            }
+                                        ).await;
+                                    }
                                 }
+
+                                // Log that auto clock-in was skipped due to external clock-in
+                                if let Some(logger) = crate::logging::get_logger() {
+                                    let _ = logger.log(
+                                        crate::logging::LogAction::AppStartup,
+                                        crate::logging::LogStatus::Info,
+                                        format!("Auto clock-in skipped: Already clocked in externally at {}", external_clock_in),
+                                        crate::logging::LogMetadata {
+                                            duration: None,
+                                            trigger_type: Some("app_startup".to_string()),
+                                            api_endpoint: None,
+                                            error_code: None,
+                                        }
+                                    ).await;
+                                }
+
                                 return Ok(false); // Don't proceed with auto clock-in
                             }
                         }
@@ -257,6 +336,21 @@ impl BackendScheduler {
                 if attendance.attendance_status == "Completed" {
                     println!("[Scheduler] Work day already completed, updating session state");
 
+                    // Log the skip reason to activity logs
+                    if let Some(logger) = crate::logging::get_logger() {
+                        let _ = logger.log(
+                            crate::logging::LogAction::AppStartup,
+                            crate::logging::LogStatus::Info,
+                            "Auto clock-in skipped: Work day already completed".to_string(),
+                            crate::logging::LogMetadata {
+                                duration: None,
+                                trigger_type: Some("app_startup".to_string()),
+                                api_endpoint: None,
+                                error_code: None,
+                            }
+                        ).await;
+                    }
+
                     // Update session state to reflect completed status
                     {
                         let mut state = self.state.lock().unwrap();
@@ -271,6 +365,22 @@ impl BackendScheduler {
                 // Check if on leave
                 if attendance.attendance_status == "On leave" {
                     println!("[Scheduler] On leave today, skipping auto clock-in");
+
+                    // Log the skip reason to activity logs
+                    if let Some(logger) = crate::logging::get_logger() {
+                        let _ = logger.log(
+                            crate::logging::LogAction::AppStartup,
+                            crate::logging::LogStatus::Info,
+                            "Auto clock-in skipped: On leave today".to_string(),
+                            crate::logging::LogMetadata {
+                                duration: None,
+                                trigger_type: Some("app_startup".to_string()),
+                                api_endpoint: None,
+                                error_code: None,
+                            }
+                        ).await;
+                    }
+
                     return Ok(false);
                 }
 
@@ -287,7 +397,22 @@ impl BackendScheduler {
         }
         
         println!("[Scheduler] Conditions met, attempting auto clock-in...");
-        
+
+        // Log that auto clock-in is proceeding
+        if let Some(logger) = crate::logging::get_logger() {
+            let _ = logger.log(
+                crate::logging::LogAction::AppStartup,
+                crate::logging::LogStatus::Info,
+                "Auto clock-in proceeding: All conditions met".to_string(),
+                crate::logging::LogMetadata {
+                    duration: None,
+                    trigger_type: Some("app_startup".to_string()),
+                    api_endpoint: None,
+                    error_code: None,
+                }
+            ).await;
+        }
+
         // Attempt auto clock-in using the manual clock-in function
         match self.manual_clock_in().await {
             Ok(success) => {

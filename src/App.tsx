@@ -3,6 +3,7 @@ import "./App.css";
 import TokenSetup from "./components/TokenSetup";
 import StatusScreen from "./components/StatusScreen";
 import ClockControls from "./components/ClockControls";
+import DebugLogs from "./components/DebugLogs";
 import { AuthProvider } from "./provider/AuthProvider";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 import { useAuth } from "./hooks/use-auth";
@@ -18,7 +19,7 @@ const queryClient = new QueryClient({
 const AppContent = () => {
   const { refreshToken, loading } = useAuth();
   const [showEmergencyOverride, setShowEmergencyOverride] = useState(false);
-  const [activeScreen, setActiveScreen] = useState<"status" | "setup" | null>(
+  const [activeScreen, setActiveScreen] = useState<"status" | "setup" | "logs" | null>(
     "status"
   );
 
@@ -46,6 +47,32 @@ const AppContent = () => {
     );
   }
 
+  // Show debug logs screen
+  if (activeScreen === "logs") {
+    return (
+      <main className="container">
+        <h1>BlackBird - Debug Logs</h1>
+        <button
+          type="button"
+          onClick={() => setActiveScreen("status")}
+          style={{
+            padding: "8px 16px",
+            fontSize: "13px",
+            backgroundColor: "#6b7280",
+            color: "white",
+            border: "none",
+            borderRadius: "4px",
+            cursor: "pointer",
+            marginBottom: "16px",
+          }}
+        >
+          ← Back to Status
+        </button>
+        <DebugLogs />
+      </main>
+    );
+  }
+
   // If refresh token exists but no access token, we'll get one automatically
   // Show status screen regardless - the backend will handle token refresh
 
@@ -56,22 +83,39 @@ const AppContent = () => {
 
       <StatusScreen />
 
-      <button
-        type="button"
-        onClick={() => setActiveScreen("setup")}
-        style={{
-          padding: "8px 16px",
-          fontSize: "13px",
-          backgroundColor: "#f59e0b",
-          color: "white",
-          border: "none",
-          borderRadius: "4px",
-          cursor: "pointer",
-          marginBottom: "16px",
-        }}
-      >
-        Go to setup
-      </button>
+      <div style={{ marginBottom: "16px" }}>
+        <button
+          type="button"
+          onClick={() => setActiveScreen("setup")}
+          style={{
+            padding: "8px 16px",
+            fontSize: "13px",
+            backgroundColor: "#f59e0b",
+            color: "white",
+            border: "none",
+            borderRadius: "4px",
+            cursor: "pointer",
+            marginRight: "10px",
+          }}
+        >
+          Go to setup
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveScreen("logs")}
+          style={{
+            padding: "8px 16px",
+            fontSize: "13px",
+            backgroundColor: "#3b82f6",
+            color: "white",
+            border: "none",
+            borderRadius: "4px",
+            cursor: "pointer",
+          }}
+        >
+          🐛 Debug Logs
+        </button>
+      </div>
       {/* Emergency manual override section */}
       <div
         style={{

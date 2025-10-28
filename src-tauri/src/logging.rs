@@ -428,6 +428,15 @@ pub fn initialize_logger(app_handle: AppHandle) {
     }
 }
 
+/// Force re-initialize the global activity logger (for debugging)
+pub fn force_reinitialize_logger(app_handle: AppHandle) {
+    unsafe {
+        println!("[LOGGING] Force re-initializing logger...");
+        LOGGER = Some(ActivityLogger::new(app_handle));
+        println!("[LOGGING] Logger force re-initialized");
+    }
+}
+
 /// Get the global activity logger instance
 pub fn get_logger() -> Option<&'static ActivityLogger> {
     unsafe { LOGGER.as_ref() }

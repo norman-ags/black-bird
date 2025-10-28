@@ -159,6 +159,8 @@ pub fn run() {
             get_activity_logs,
             get_filtered_activity_logs,
             clear_activity_logs,
+            debug_logging_status,
+            reinitialize_logger,
 
             // Legacy greeting command (can be removed in production)
             greet
